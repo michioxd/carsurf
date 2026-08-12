@@ -7,8 +7,7 @@ rootless.
 The original CarBridge stopped at iOS 13 because CarPlay's UI moved out of
 SpringBoard into its own process and the entitlement gate moved into
 `CarPlaySupport.framework`. This is a fresh implementation against the modern
-pipeline, not a port. [`ARCHITECTURE.md`](ARCHITECTURE.md) explains the mechanism
-and the three gates that have to be opened.
+pipeline, not a port.
 
 ## What it does
 
