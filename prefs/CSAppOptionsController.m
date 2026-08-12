@@ -2,6 +2,7 @@
 #import "CSPrefsStore.h"
 #import "CSConfig.h"
 #import "CSLayoutSegmentCell.h"
+#import "CSPatchLogController.h"
 #import "CSPatchState.h"
 #import <notify.h>
 
@@ -169,6 +170,17 @@
                                               edit:Nil];
         patchNow.buttonAction = @selector(carsurfPatchNow);
         [result addObject:patchNow];
+
+        PSSpecifier *patchLog =
+            [PSSpecifier preferenceSpecifierNamed:@"View Live Patch Log"
+                                            target:self
+                                               set:NULL
+                                               get:NULL
+                                            detail:CSPatchLogController.class
+                                              cell:PSLinkCell
+                                              edit:Nil];
+        [patchLog setProperty:self.bundleIdentifier forKey:@"carsurfBundle"];
+        [result addObject:patchLog];
 
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
         [group setProperty:@"Choose the viewport and whether the app should build its "
@@ -345,9 +357,8 @@
                                                         @"to show its phone interface."];
                         break;
                     default:
-                        [self carsurfPresentAlertTitle:@"Patch Failed"
-                                                message:record.failureReason
-                                                    ?: @"See device log for details."];
+                        [self carsurfPresentPatchFailureWithMessage:
+                            record.failureReason ?: @"See the live patch log for details."];
                         break;
                 }
             }];
@@ -443,6 +454,39 @@
                                       preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK"
                                               style:UIAlertActionStyleDefault
+                                            handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)carsurfPresentPatchFailureWithMessage:(NSString *)message {
+    UIAlertController *alert =
+        [UIAlertController alertControllerWithTitle:@"Patch Failed"
+                                            message:message
+                                     preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"View Log"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            PSSpecifier *specifier = [PSSpecifier
+                preferenceSpecifierNamed:@"Patch Log" target:self set:NULL get:NULL
+                detail:CSPatchLogController.class cell:PSLinkCell edit:Nil];
+            [specifier setProperty:self.bundleIdentifier forKey:@"carsurfBundle"];
+            CSPatchLogController *controller = [CSPatchLogController new];
+            controller.specifier = specifier;
+            [self pushController:controller];
+        });
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Share Log"
+                                              style:UIAlertActionStyleDefault
+                                            handler:^(__unused UIAlertAction *action) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [CSPatchLogController presentShareSheetFromController:self
+                                                       sourceView:self.view
+                                                 bundleIdentifier:self.bundleIdentifier];
+        });
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"Close"
+                                              style:UIAlertActionStyleCancel
                                             handler:nil]];
     [self presentViewController:alert animated:YES completion:nil];
 }

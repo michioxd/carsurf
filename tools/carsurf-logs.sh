@@ -6,7 +6,7 @@
 #   carsurf-logs          print everything, newest last
 #   carsurf-logs -c       clear all collected logs
 
-SHARED="/var/mobile/Library/Logs/carsurf.log /var/tmp/carsurf.log"
+SHARED="/var/mobile/Library/Logs/carsurf.log /var/tmp/carsurf.log /var/jb/Library/CarSurf/patch.log"
 CONTAINERS="/var/mobile/Containers/Data/Application"
 
 if [ "$1" = "-c" ]; then

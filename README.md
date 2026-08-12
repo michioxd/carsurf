@@ -124,6 +124,10 @@ tap one app to start with, and turn on **Enable for CarPlay**. `carsurf-helperd`
 reconciles automatically — watch the status line on that same screen for the
 result, or tap **Patch Now** to re-check it immediately.
 
+When a patch fails, open **View Live Patch Log** on that app's settings page.
+Use **Clear Log**, reproduce with **Patch Again**, then **Share Log** to send the
+diagnostic text through Messenger, Telegram, Mail, or any other iOS share target.
+
 ## Verify it works before blaming the car
 
 Run the audit tool first. It checks, on your actual device, that every private

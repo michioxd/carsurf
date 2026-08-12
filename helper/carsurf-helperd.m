@@ -17,10 +17,9 @@
 // the patch is already in place) is what makes that self-heal instead of being
 // masked forever by "we already touched this bundle once" state.
 //
-// Reconcile currently runs at boot, on every preference change, and on a manual
-// "patch now" request from Settings (CSPatchRequestNotification) — there is no
-// automatic detection of an app update yet, so after YouTube auto-updates the
-// user re-opens Settings and taps Patch Now to recover it.
+// Reconcile runs at boot and on every preference change. A manual "patch now"
+// request is deliberately targeted to the requested app so its UI gets one
+// prompt result without waiting for unrelated enabled apps to be re-verified.
 //
 // The outcome of every attempt — success, failure, and which app version it was
 // attempted against — is recorded in CSPatchState. That record is the
@@ -36,12 +35,15 @@
 #import <Foundation/Foundation.h>
 #import "CSAppFilter.h"
 #import "CSLog.h"
+#import "CSPatchLog.h"
 #import "CSPatchState.h"
 #import <crt_externs.h>
 #import <notify.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import <spawn.h>
+#import <stdarg.h>
+#import <sys/stat.h>
 #import <sys/wait.h>
 
 static NSString *const kPrefsPath =
@@ -52,6 +54,30 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
 static NSString *const kLdid = @"/var/jb/usr/bin/ldid";
 static NSString *const kJbctl = @"/var/jb/usr/bin/jbctl";
 static NSString *const kUicache = @"/var/jb/usr/bin/uicache";
+
+/// Keep the normal CarSurf log and the user-shareable patch transcript in sync
+/// for every helper diagnostic. Other processes continue using CSLog normally.
+static void CSHelperLog(const char *format, ...)
+    __attribute__((format(printf, 1, 2)));
+static void CSHelperLog(const char *format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    char *body = NULL;
+    if (vasprintf(&body, format, arguments) < 0) body = NULL;
+    va_end(arguments);
+    if (!body) return;
+    CSLogImpl(CS_TAG, "%s", body);
+    NSString *message = [NSString stringWithUTF8String:body];
+    if (!message) {
+        message = [[NSString alloc] initWithBytes:body length:strlen(body)
+                                         encoding:NSISOLatin1StringEncoding];
+    }
+    CSPatchLogAppend(@"[helperd] %@", message ?: @"(unreadable log message)");
+    free(body);
+}
+
+#undef CSLog
+#define CSLog(fmt, ...) CSHelperLog(fmt, ##__VA_ARGS__)
 
 /// Never touch these, whatever the preferences say. SpringBoard and Settings would
 /// take the UI down with them; the rest keep the jailbreak itself manageable, and a
@@ -69,12 +95,18 @@ static NSSet *CSProtectedBundleIdentifiers(void) {
     return protected;
 }
 
+static NSString *const kCSProtectedPatchReason =
+    @"This app is protected because modifying it could break the jailbreak or "
+     "device management. CarSurf will not patch it.";
+
 #pragma mark - Subprocess
 
 /// Runs a tool to completion. `stdoutPath`, when given, receives its stdout.
 /// Returns the exit status, or -1 if the process could not be started.
 static int CSRun(NSArray<NSString *> *arguments, NSString *stdoutPath) {
     if (arguments.count == 0) return -1;
+
+    CSLog("run: %s", [arguments componentsJoinedByString:@" "].UTF8String);
 
     NSMutableArray *storage = [NSMutableArray new];
     char **argv = calloc(arguments.count + 1, sizeof(char *));
@@ -91,6 +123,17 @@ static int CSRun(NSArray<NSString *> *arguments, NSString *stdoutPath) {
         posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
                                          stdoutPath.fileSystemRepresentation,
                                          O_WRONLY | O_CREAT | O_TRUNC, 0600);
+        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
+                                         CSPatchLogPath.fileSystemRepresentation,
+                                         O_WRONLY | O_CREAT | O_APPEND, 0644);
+    } else {
+        // Stream command output directly into the transcript while it runs.
+        // This is what makes the Settings screen genuinely live rather than a
+        // final summary assembled only after the helper has already failed.
+        posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
+                                         CSPatchLogPath.fileSystemRepresentation,
+                                         O_WRONLY | O_CREAT | O_APPEND, 0644);
+        posix_spawn_file_actions_adddup2(&actions, STDOUT_FILENO, STDERR_FILENO);
     }
 
     pid_t pid = 0;
@@ -107,7 +150,10 @@ static int CSRun(NSArray<NSString *> *arguments, NSString *stdoutPath) {
 
     int status = 0;
     waitpid(pid, &status, 0);
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    chmod(CSPatchLogPath.fileSystemRepresentation, 0644);
+    int exitStatus = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    CSLog("exit %d: %s", exitStatus, arguments[0].UTF8String);
+    return exitStatus;
 }
 
 #pragma mark - Bundle lookup
@@ -152,6 +198,18 @@ static NSString *CSBackupDirectory(NSString *bundleID) {
             stringByAppendingPathComponent:bundleID];
 }
 
+/// RootHide runs jailbreak tools through its translated jbroot. A file created
+/// in the system /tmp is consequently invisible when ldid later opens the same
+/// literal path. Keep every helper scratch file under /var/jb instead, which
+/// RootHide translates consistently for both the daemon and its child tools.
+/// A UUID also prevents stale files or overlapping requests from colliding.
+static NSString *CSScratchPath(NSString *purpose, NSString *extension) {
+    NSString *name = [NSString stringWithFormat:@".%@-%@%@", purpose,
+                      NSUUID.UUID.UUIDString,
+                      extension.length ? [@"." stringByAppendingString:extension] : @""];
+    return [kStateDirectory stringByAppendingPathComponent:name];
+}
+
 static NSString *CSAppVersion(NSString *bundleID) {
     NSString *bundlePath = CSBundlePathForIdentifier(bundleID);
     if (!bundlePath) return nil;
@@ -166,8 +224,11 @@ static NSString *CSAppVersion(NSString *bundleID) {
 /// Adds the new cdhash to the jailbreak's trustcache. Without this the re-signed
 /// binary is refused execution.
 static BOOL CSTrustExecutable(NSString *executablePath) {
-    NSString *dump = @"/tmp/.carsurf-cdhash";
-    if (CSRun(@[ kLdid, @"-h", executablePath ], dump) != 0) return NO;
+    NSString *dump = CSScratchPath(@"cdhash", @"txt");
+    if (CSRun(@[ kLdid, @"-h", executablePath ], dump) != 0) {
+        [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
+        return NO;
+    }
 
     NSString *text = [NSString stringWithContentsOfFile:dump
                                               encoding:NSUTF8StringEncoding error:NULL];
@@ -256,8 +317,11 @@ static void CSTrustFrameworks(NSString *bundlePath) {
 }
 
 static NSDictionary *CSReadEntitlements(NSString *executablePath) {
-    NSString *dump = @"/tmp/.carsurf-ents.plist";
-    if (CSRun(@[ kLdid, @"-e", executablePath ], dump) != 0) return nil;
+    NSString *dump = CSScratchPath(@"entitlements-read", @"plist");
+    if (CSRun(@[ kLdid, @"-e", executablePath ], dump) != 0) {
+        [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
+        return nil;
+    }
     NSDictionary *entitlements = [NSDictionary dictionaryWithContentsOfFile:dump];
     [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
     return entitlements;
@@ -450,8 +514,16 @@ static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason)
     // --- entitlement -------------------------------------------------------
     NSMutableDictionary *patchedEntitlements = [entitlements mutableCopy];
     patchedEntitlements[@"SBStarkCapable"] = @YES;
-    NSString *temporary = @"/tmp/.carsurf-ents-new.plist";
-    [patchedEntitlements writeToFile:temporary atomically:YES];
+    NSString *temporary = CSScratchPath(@"entitlements-sign", @"plist");
+    if (![patchedEntitlements writeToFile:temporary atomically:YES]) {
+        CSLog("cannot patch %s: failed to write temporary entitlements at %s",
+              bundleID.UTF8String, temporary.UTF8String);
+        if (outReason) {
+            *outReason = @"CarSurf could not write the temporary entitlement file. "
+                         @"Open Live Patch Log for the path and error details.";
+        }
+        return CSApplyPatchResultFailed;
+    }
 
     BOOL signed_ = CSSignWithEntitlements(executablePath, temporary);
     [fileManager removeItemAtPath:temporary error:NULL];
@@ -515,6 +587,47 @@ static void CSRevertPatch(NSString *bundleID) {
 
 #pragma mark - Reconcile
 
+static void CSRecordProtectedFailure(NSString *bundleID) {
+    CSPatchLogAppend(@"========== PATCH %@ ==========", bundleID);
+    CSLog("%s is protected and will not be modified", bundleID.UTF8String);
+    CSPatchStateRecordFailure(bundleID, kCSProtectedPatchReason);
+    CSPatchLogAppend(@"========== FAILED %@ ==========", bundleID);
+}
+
+/// Attempts one app and records a terminal result for every path. Settings
+/// polls this per-app state, so even a refusal must be recorded as a failure
+/// rather than merely written to the transcript.
+static void CSAttemptAndRecordPatch(NSString *bundleID) {
+    if ([CSProtectedBundleIdentifiers() containsObject:bundleID]) {
+        CSRecordProtectedFailure(bundleID);
+        return;
+    }
+
+    CSPatchLogAppend(@"========== PATCH %@ ==========", bundleID);
+    NSString *reason = nil;
+    CSApplyPatchResult result = CSApplyPatch(bundleID, &reason);
+    NSString *version = CSAppVersion(bundleID);
+    switch (result) {
+        case CSApplyPatchResultPatched:
+            CSPatchStateRecordSuccess(bundleID, version);
+            CSPatchLogAppend(@"========== SUCCESS %@ ==========", bundleID);
+            break;
+        case CSApplyPatchResultNative:
+            CSPatchStateRecordNative(bundleID, version);
+            CSPatchLogAppend(@"========== NATIVE %@ ==========", bundleID);
+            break;
+        case CSApplyPatchResultNativeBridged:
+            CSPatchStateRecordNativeBridged(bundleID, version);
+            CSPatchLogAppend(@"========== NATIVE BRIDGED %@ ==========", bundleID);
+            break;
+        case CSApplyPatchResultFailed:
+            CSPatchStateRecordFailure(bundleID, reason ?:
+                @"patch attempt failed — open Live Patch Log in CarSurf Settings");
+            CSPatchLogAppend(@"========== FAILED %@ ==========", bundleID);
+            break;
+    }
+}
+
 static void CSReconcile(void) {
     NSDictionary *preferences = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     BOOL globallyEnabled = [preferences[@"enabled"] boolValue];
@@ -527,7 +640,7 @@ static void CSReconcile(void) {
             if (![entry isKindOfClass:NSDictionary.class]) return;
             if (![entry[@"enabled"] boolValue]) return;
             if ([CSProtectedBundleIdentifiers() containsObject:bundleID]) {
-                CSLog("%s is protected and will not be modified", bundleID.UTF8String);
+                CSRecordProtectedFailure(bundleID);
                 return;
             }
             [desired addObject:bundleID];
@@ -540,23 +653,7 @@ static void CSReconcile(void) {
     // set, so this costs almost nothing when nothing changed on disk — but it is
     // the only way to notice an App Store update silently stripped the patch.
     for (NSString *bundleID in desired) {
-        NSString *reason = nil;
-        CSApplyPatchResult result = CSApplyPatch(bundleID, &reason);
-        NSString *version = CSAppVersion(bundleID);
-        switch (result) {
-            case CSApplyPatchResultPatched:
-                CSPatchStateRecordSuccess(bundleID, version);
-                break;
-            case CSApplyPatchResultNative:
-                CSPatchStateRecordNative(bundleID, version);
-                break;
-            case CSApplyPatchResultNativeBridged:
-                CSPatchStateRecordNativeBridged(bundleID, version);
-                break;
-            case CSApplyPatchResultFailed:
-                CSPatchStateRecordFailure(bundleID, reason ?: @"patch attempt failed — see device log");
-                break;
-        }
+        CSAttemptAndRecordPatch(bundleID);
     }
 
     NSArray<NSString *> *patched = CSPatchStateAllPatchedIdentifiers();
@@ -569,20 +666,36 @@ static void CSReconcile(void) {
     CSLog("reconciled: %lu enabled", (unsigned long)desired.count);
 }
 
-/// Handles a manual "Patch Now" request from Settings (see
-/// CSAppOptionsController). The request file names the specific bundle the
-/// user wants re-checked, but reconciling everything enabled is simple, cheap
-/// for the reasons above, and correct — a targeted single-bundle path can be
-/// added later if the full pass turns out to be too slow with many apps enabled.
+/// Handles a manual "Patch Now" request from Settings. This must write one
+/// terminal result for each requested bundle and must not run a full reconcile:
+/// the Settings screen is waiting on the selected app's state timestamp.
 static void CSHandlePatchRequest(void) {
     NSArray<NSString *> *requested = CSPatchRequestTakeAll();
     if (requested.count == 0) return;
     CSLog("patch-now request for: %s", [requested componentsJoinedByString:@", "].UTF8String);
-    CSReconcile();
+
+    NSDictionary *preferences = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
+    BOOL globallyEnabled = [preferences[@"enabled"] boolValue];
+    NSDictionary *apps = preferences[@"apps"];
+    for (NSString *bundleID in requested) {
+        NSDictionary *entry = [apps isKindOfClass:NSDictionary.class] ? apps[bundleID] : nil;
+        if (!globallyEnabled || ![entry isKindOfClass:NSDictionary.class] ||
+            ![entry[@"enabled"] boolValue]) {
+            NSString *reason = @"Enable this app in CarSurf before patching it.";
+            CSPatchLogAppend(@"========== PATCH %@ ==========", bundleID);
+            CSLog("refusing manual patch for %s: app is not enabled", bundleID.UTF8String);
+            CSPatchStateRecordFailure(bundleID, reason);
+            CSPatchLogAppend(@"========== FAILED %@ ==========", bundleID);
+            continue;
+        }
+        CSAttemptAndRecordPatch(bundleID);
+    }
+    CSLog("manual patch complete: %lu requested", (unsigned long)requested.count);
 }
 
 int main(int argc, char *argv[]) {
     @autoreleasepool {
+        CSPatchLogAppend(@"========== HELPER STARTED ==========");
         CSLog("helper started (uid %d)", getuid());
 
         [NSFileManager.defaultManager createDirectoryAtPath:kStateDirectory
@@ -603,6 +716,13 @@ int main(int argc, char *argv[]) {
         notify_register_dispatch(CSPatchRequestNotification.UTF8String, &patchNowToken,
                                  dispatch_get_main_queue(), ^(int t) {
             CSHandlePatchRequest();
+        });
+
+        int clearLogToken = 0;
+        notify_register_dispatch(CSPatchLogClearNotification.UTF8String,
+                                 &clearLogToken, dispatch_get_main_queue(),
+                                 ^(int t) {
+            CSPatchLogClear();
         });
 
         dispatch_main();

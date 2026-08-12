@@ -5,11 +5,13 @@ BUNDLE_NAME = CSPrefs
 CSPrefs_FILES  = CSRootListController.m
 CSPrefs_FILES += CSAppListController.m
 CSPrefs_FILES += CSAppOptionsController.m
+CSPrefs_FILES += CSPatchLogController.m
 CSPrefs_FILES += CSLayoutSegmentCell.m
 CSPrefs_FILES += CSPrefsStore.m
 CSPrefs_FILES += ../shared/CSLog.m
 CSPrefs_FILES += ../shared/CSAppFilter.m
 CSPrefs_FILES += ../shared/CSPatchState.m
+CSPrefs_FILES += ../shared/CSPatchLog.m
 
 CSPrefs_CFLAGS = -fobjc-arc -I../shared -DCARSURF_HIDE_SYSTEM_APPS=$(CARSURF_HIDE_SYSTEM_APPS)
 CSPrefs_INSTALL_PATH = /Library/PreferenceBundles
