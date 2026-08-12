@@ -10,6 +10,15 @@ static NSString *const kStatePath = @"/var/jb/Library/CarSurf/patched.plist";
 static NSString *const kRequestPath = @"/var/jb/Library/CarSurf/patch-request.plist";
 NSString *const CSPatchRequestNotification = @"com.pavunato.carsurf/patch-now";
 
+BOOL CSUsesRuntimeCarPlayAdmission(void) {
+    static BOOL runtime;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        runtime = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 18;
+    });
+    return runtime;
+}
+
 #pragma mark - Record
 
 @implementation CSPatchRecord

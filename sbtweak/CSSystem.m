@@ -4,6 +4,7 @@
 #import "CSConfig.h"
 #import "CSLog.h"
 #import "CSRuntime.h"
+#import "CSPatchState.h"
 #import <mach-o/loader.h>
 #import <objc/runtime.h>
 
@@ -16,7 +17,25 @@ static void CSInstallCarPlayHooks(void) {
     if (installed) return;
     installed = YES;
 
-    // iOS 18-era path first; the two below are no-ops when their classes are
+    // iOS 16/17 admission: DashBoard's _proxyPassesInclusionFilter asks
+    // LSBundleProxy for entitlements, so an app can be admitted at runtime with no
+    // on-disk change. Required on RootHide, where the on-disk route is impossible —
+    // jbctl refuses to trustcache anything under /var/containers/Bundle/Application,
+    // so a re-signed app binary can never launch.
+    //
+    // Strictly version-gated. On iOS 18 CarKit never consults LaunchServices, so
+    // these hooks cannot admit anything there — and they are not free to leave
+    // installed: LSBundleProxy sits on hot Foundation paths, and an earlier
+    // version of this file crash-looped SpringBoard into safe mode on 18.5.
+    // Where they cannot help, they do not run.
+    if (CSUsesRuntimeCarPlayAdmission()) {
+        CSInstallSceneManifestSpoof();
+    } else {
+        CSLog("iOS 18+ — CarKit ignores LaunchServices, so runtime admission is "
+              "skipped; qualification is the helper's on-disk patch");
+    }
+
+    // iOS 18-era path; the two below are no-ops when their classes are
     // absent, so both generations are covered by one build.
     // Gate G1's admission check is +[CRCarPlayAppDeclaration requiredEntitlementKeys]:
     // an app qualifies by holding CARCapableApp, SBStarkCapable, or one of the
@@ -24,10 +43,9 @@ static void CSInstallCarPlayHooks(void) {
     // evaluated at app-registration time, outside any process we inject into —
     // measured directly, by hooking every LSBundleProxy entitlement accessor and
     // observing that none is ever consulted for a non-CarPlay app. So no runtime
-    // hook can add a bundle to the candidate roster, and the former manifest and
-    // entitlement spoofs (CSSceneManifestSpoof.m, no longer built) were dead
-    // code on hot Foundation paths. Qualification is now the installer's job; this
-    // hook still promotes the policy once a declaration exists.
+    // hook can add a bundle to the candidate roster *on that release*, and
+    // qualification there is the installer's job; this hook still promotes the
+    // policy once a declaration exists.
     CSInstallCarKitPolicyHook();
     CSInstallEntitlementSpoof();
     CSInstallAppListFilter();

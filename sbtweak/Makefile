@@ -4,6 +4,7 @@ TWEAK_NAME = CSSystem
 
 CSSystem_FILES  = CSSystem.m
 CSSystem_FILES += CSCarKitPolicy.m
+CSSystem_FILES += CSSceneManifestSpoof.m
 CSSystem_FILES += CSEntitlementSpoof.m
 CSSystem_FILES += CSAppList.m
 CSSystem_FILES += CSRelay.m

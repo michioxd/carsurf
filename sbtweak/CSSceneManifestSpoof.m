@@ -5,32 +5,44 @@
 #import "CSLog.h"
 #import "CSRuntime.h"
 #import <objc/message.h>
+#import <objc/runtime.h>
 
-// The upstream half of gate G1.
+// Runtime CarPlay admission for iOS 16.
 //
-// Promoting a CRCarPlayAppPolicy is not enough: CarKit only builds a
-// CRCarPlayAppDeclaration — and therefore only asks for a policy — for apps it
-// already considers CarPlay-capable. A backtrace showed the declarations being
-// built inside CarKit off the FrontBoardServices app library, which reads each
-// app's cached Info.plist through LSBundleProxy.
+// On iOS 18.5 nothing here fires: CarKit builds its declarations without ever
+// consulting LaunchServices, which is why this file was abandoned once already.
+// iOS 16 is a different pipeline, and a crash backtrace proved it reads exactly
+// what we can reach:
 //
-// What makes an app capable is visible in Apple's own non-template CarPlay apps.
-// /Applications/CarCamera.app declares exactly this and nothing else:
+//   DashBoard           +[DashBoard _newApplicationLibrary]_block_invoke
+//   FrontBoardServices  _proxyPassesInclusionFilter
+//   CoreServices        -[LSBundleProxy entitlementValueForKey:ofClass:valuesOfClass:]
 //
-//   UIApplicationSceneManifest = {
-//     UISceneConfigurations = {
-//       UIWindowSceneSessionRoleCarPlay = ( { UISceneDelegateClassName = ... } );
-//     };
-//   };
+// DashBoard is the CarPlay UI, and it filters the app library by asking
+// LSBundleProxy for entitlements. That is the admission gate, and it is a plain
+// ObjC message we can answer.
 //
-// UIWindowSceneSessionRoleCarPlay is a plain UIWindowScene role — a first-class
-// UIKit mechanism for rendering real app UI on the head unit, distinct from the
-// CPTemplateApplication template role. Apple's CarCamera, CarRadio, CarClimate and
-// AutoSettings all work this way.
+// This matters most on RootHide, where the on-disk route is simply unavailable:
+// `jbctl trustcache add` silently refuses (exit 0, no error, no entry) for any
+// path under /var/containers/Bundle/Application, so a re-signed App Store binary
+// can never be made launchable. Measured directly — a probe in /var/mobile takes
+// the trustcache from 166 to 167 entries, the same probe inside an app container
+// leaves it at 167. Runtime admission is the only route left there.
 //
-// So rather than forge CarPlay entitlements, this reports that role in the scene
-// manifest of allowlisted apps. CarKit then treats them exactly like CarCamera.
-// The app's own Info.plist on disk is untouched, so no code signature is affected.
+// WHAT NOT TO DO — this file aborted both SpringBoard and CarPlay into safe mode:
+//
+//   * Never hook -entitlements or -_entitlements. On iOS 16 they do not vend an
+//     NSDictionary; substituting one makes CoreServices send an LSEntitlements-only
+//     selector to a plain dictionary. The unrecognized-selector exception is
+//     thrown on FrontBoardServices' app-loader thread, which has no @catch, so the
+//     process aborts during startup before any UI exists.
+//   * Never call -bundleIdentifier on an NSBundle from inside an info-dictionary
+//     hook; -bundleIdentifier is built on the info dictionary and the recursion
+//     kills the stack.
+//
+// Everything below therefore only ever answers *value* getters, always with a
+// type the caller already expects, and every hook body is wrapped so a surprise
+// degrades to "not spoofed" instead of a boot loop.
 
 static NSString *const kSceneManifestKey = @"UIApplicationSceneManifest";
 static NSString *const kSceneConfigurationsKey = @"UISceneConfigurations";
@@ -56,26 +68,277 @@ static BOOL CSShouldSpoofProxy(id proxy, NSString **outBundleID) {
     return YES;
 }
 
-/// Returns `manifest` with a CarPlay window-scene configuration added. The app's
-/// existing configurations are preserved: removing its phone scene role would
-/// break the app everywhere else.
+/// The CarCamera-style capability flags: they grant the plain UIWindowScene
+/// CarPlay role rather than a template capability like -carplay-audio, which
+/// would additionally advertise the app as a media source CarKit expects to
+/// drive with the Now Playing template.
+static BOOL CSIsCapabilityFlagKey(NSString *key) {
+    return [key isKindOfClass:NSString.class] &&
+           ([key isEqualToString:@"CARCapableApp"] ||
+            [key isEqualToString:@"SBStarkCapable"]);
+}
+
+#pragma mark - Entitlement value getters (the admission gate)
+
+// iOS 16's real selector, seen in the DashBoard backtrace. The two-argument form
+// below is a wrapper around it on this release, but both are hooked because the
+// shape has moved across versions and answering only one leaves a hole.
+
+static id (*orig_entitlementValueForKey3)(id, SEL, NSString *, Class, Class);
+
+static id cs_entitlementValueForKey3(id self, SEL _cmd, NSString *key,
+                                     Class expected, Class valuesExpected) {
+    id value = orig_entitlementValueForKey3(self, _cmd, key, expected, valuesExpected);
+    if (value) return value; // genuinely entitled — never override a real answer
+
+    @try {
+        if (!CSIsCapabilityFlagKey(key)) return value;
+        NSString *bundleID = nil;
+        if (!CSShouldSpoofProxy(self, &bundleID)) return value;
+
+        // Answer with the type the caller asked for. A boolean entitlement is an
+        // NSNumber; if the caller wants anything else, decline rather than hand
+        // back something it will message with a selector NSNumber lacks.
+        if (expected && expected != NSNumber.class) return value;
+
+        CSVLog("admitted %s via %s (3-arg)", bundleID.UTF8String, key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        CSLog("entitlement spoof (3-arg) suppressed an exception");
+        return value;
+    }
+}
+
+static id (*orig_entitlementValueForKey2)(id, SEL, NSString *, Class);
+
+static id cs_entitlementValueForKey2(id self, SEL _cmd, NSString *key, Class expected) {
+    id value = orig_entitlementValueForKey2(self, _cmd, key, expected);
+    if (value) return value;
+
+    @try {
+        if (!CSIsCapabilityFlagKey(key)) return value;
+        NSString *bundleID = nil;
+        if (!CSShouldSpoofProxy(self, &bundleID)) return value;
+        if (expected && expected != NSNumber.class) return value;
+
+        CSVLog("admitted %s via %s (2-arg)", bundleID.UTF8String, key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        CSLog("entitlement spoof (2-arg) suppressed an exception");
+        return value;
+    }
+}
+
+#pragma mark - LSBundleInfoCachedValues (SpringBoard's route)
+
+// SpringBoard does not read entitlements the way CarPlay does. Its
+// FBSApplicationInfo builds the app library through -entitlementValuesForKeys:,
+// which does not return an NSDictionary at all — it returns a private
+// LSBundleInfoCachedValues, and the caller then pulls values out with -boolForKey:
+// and friends. Substituting a dictionary for that object is exactly what aborted
+// SpringBoard into safe mode, so instead the real object is handed back untouched
+// and merely *tagged*; the accessors below then answer capability keys for tagged
+// objects only.
+//
+// The tag set is weak: a cached-values object that goes away must not be kept
+// alive, and a later object reusing the address must not inherit the tag.
+
+static NSHashTable *CSTaggedCachedValues(void) {
+    static NSHashTable *table;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ table = [NSHashTable weakObjectsHashTable]; });
+    return table;
+}
+
+static NSLock *CSTagLock(void) {
+    static NSLock *lock;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ lock = [NSLock new]; });
+    return lock;
+}
+
+static void CSTagCachedValues(id object) {
+    if (!object) return;
+    NSLock *lock = CSTagLock();
+    [lock lock];
+    [CSTaggedCachedValues() addObject:object];
+    [lock unlock];
+}
+
+static BOOL CSIsTaggedCachedValues(id object) {
+    if (!object) return NO;
+    NSLock *lock = CSTagLock();
+    [lock lock];
+    BOOL tagged = [CSTaggedCachedValues() containsObject:object];
+    [lock unlock];
+    return tagged;
+}
+
+/// True when this lookup is one we should answer: a tagged object being asked
+/// about a capability flag it does not really have.
+static BOOL CSShouldAnswerCachedValue(id self, NSString *key, id existing) {
+    return !existing && CSIsCapabilityFlagKey(key) && CSIsTaggedCachedValues(self);
+}
+
+static BOOL (*orig_cv_boolForKey)(id, SEL, NSString *);
+
+static BOOL cs_cv_boolForKey(id self, SEL _cmd, NSString *key) {
+    BOOL value = orig_cv_boolForKey(self, _cmd, key);
+    @try {
+        if (value) return value;
+        if (!CSIsCapabilityFlagKey(key) || !CSIsTaggedCachedValues(self)) return value;
+        CSVLog("answered boolForKey:%s for a tagged app library entry", key.UTF8String);
+        return YES;
+    } @catch (id exception) {
+        return value;
+    }
+}
+
+static id (*orig_cv_objectForKey)(id, SEL, NSString *);
+
+static id cs_cv_objectForKey(id self, SEL _cmd, NSString *key) {
+    id value = orig_cv_objectForKey(self, _cmd, key);
+    @try {
+        if (!CSShouldAnswerCachedValue(self, key, value)) return value;
+        CSVLog("answered objectForKey:%s for a tagged app library entry", key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        return value;
+    }
+}
+
+static id (*orig_cv_numberForKey)(id, SEL, NSString *);
+
+static id cs_cv_numberForKey(id self, SEL _cmd, NSString *key) {
+    id value = orig_cv_numberForKey(self, _cmd, key);
+    @try {
+        if (!CSShouldAnswerCachedValue(self, key, value)) return value;
+        CSVLog("answered numberForKey:%s for a tagged app library entry", key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        return value;
+    }
+}
+
+static id (*orig_cv_objectForKeyOfClass)(id, SEL, NSString *, Class);
+
+static id cs_cv_objectForKeyOfClass(id self, SEL _cmd, NSString *key, Class expected) {
+    id value = orig_cv_objectForKeyOfClass(self, _cmd, key, expected);
+    @try {
+        if (!CSShouldAnswerCachedValue(self, key, value)) return value;
+        if (expected && expected != NSNumber.class) return value;
+        CSVLog("answered objectForKey:%s ofClass: for a tagged app library entry",
+              key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        return value;
+    }
+}
+
+static id (*orig_cv_objectForKeyOfClassValues)(id, SEL, NSString *, Class, Class);
+
+static id cs_cv_objectForKeyOfClassValues(id self, SEL _cmd, NSString *key,
+                                          Class expected, Class valuesExpected) {
+    id value = orig_cv_objectForKeyOfClassValues(self, _cmd, key, expected, valuesExpected);
+    @try {
+        if (!CSShouldAnswerCachedValue(self, key, value)) return value;
+        if (expected && expected != NSNumber.class) return value;
+        CSVLog("answered objectForKey:%s ofClass:valuesOfClass: for a tagged entry",
+              key.UTF8String);
+        return @YES;
+    } @catch (id exception) {
+        return value;
+    }
+}
+
+static void CSInstallCachedValuesHooks(void) {
+    Class cls = CSLookupClass("LSBundleInfoCachedValues");
+    if (!cls) {
+        CSLog("LSBundleInfoCachedValues absent — SpringBoard's app library cannot "
+              "be answered on this release");
+        return;
+    }
+
+    BOOL b = CSSwizzleInstanceMethod(cls, @selector(boolForKey:),
+                                     (IMP)cs_cv_boolForKey, (IMP *)&orig_cv_boolForKey);
+    BOOL o = CSSwizzleInstanceMethod(cls, @selector(objectForKey:),
+                                     (IMP)cs_cv_objectForKey, (IMP *)&orig_cv_objectForKey);
+    BOOL n = CSSwizzleInstanceMethod(cls, @selector(numberForKey:),
+                                     (IMP)cs_cv_numberForKey, (IMP *)&orig_cv_numberForKey);
+    BOOL oc = CSSwizzleInstanceMethod(cls, sel_getUid("objectForKey:ofClass:"),
+                                      (IMP)cs_cv_objectForKeyOfClass,
+                                      (IMP *)&orig_cv_objectForKeyOfClass);
+    BOOL ocv = CSSwizzleInstanceMethod(cls, sel_getUid("objectForKey:ofClass:valuesOfClass:"),
+                                       (IMP)cs_cv_objectForKeyOfClassValues,
+                                       (IMP *)&orig_cv_objectForKeyOfClassValues);
+
+    CSLog("app library accessors hooked (bool=%d, object=%d, number=%d, "
+          "ofClass=%d, ofClassValues=%d)", b, o, n, oc, ocv);
+}
+
+static id (*orig_entitlementValuesForKeys)(id, SEL, NSArray *);
+
+static id cs_entitlementValuesForKeys(id self, SEL _cmd, NSArray *keys) {
+    id result = orig_entitlementValuesForKeys(self, _cmd, keys);
+
+    @try {
+        NSString *bundleID = nil;
+        if (!CSShouldSpoofProxy(self, &bundleID)) return result;
+
+        // Only ever augment a real dictionary. Manufacturing one when the callee
+        // returned some other type is what aborted SpringBoard before. Log the
+        // type when we decline: FBSApplicationInfo builds SpringBoard's app
+        // library through this getter, so declining here is the difference
+        // between an app reaching the CarPlay dashboard and not.
+        // SpringBoard's FBSApplicationInfo gets an LSBundleInfoCachedValues here,
+        // not a dictionary. Hand back the real object untouched and tag it — the
+        // accessors above answer capability keys for tagged objects, which is the
+        // only safe way to influence a type whose interface we do not own.
+        if (![result isKindOfClass:NSDictionary.class]) {
+            CSTagCachedValues(result);
+            CSVLog("tagged the app library entry for %s (%s)", bundleID.UTF8String,
+                  result ? object_getClassName(result) : "nil");
+            return result;
+        }
+        if (![keys isKindOfClass:NSArray.class]) return result;
+
+        NSMutableDictionary *patched = nil;
+        for (NSString *key in keys) {
+            if (!CSIsCapabilityFlagKey(key)) continue;
+            if (((NSDictionary *)result)[key]) continue;
+            if (!patched) patched = [result mutableCopy];
+            patched[key] = @YES;
+        }
+        if (!patched) return result;
+
+        CSVLog("admitted %s via a bulk entitlement query", bundleID.UTF8String);
+        return patched;
+    } @catch (id exception) {
+        CSLog("entitlement spoof (bulk) suppressed an exception");
+        return result;
+    }
+}
+
+#pragma mark - Info dictionary (SBStarkLaunchModes and the CarPlay scene role)
+
+/// Returns `manifest` with a CarPlay window-scene configuration added, preserving
+/// the app's existing configurations — removing its phone scene role would break
+/// the app everywhere else.
 static NSDictionary *CSManifestWithCarPlayRole(id manifest, NSString *bundleID) {
     NSDictionary *original = [manifest isKindOfClass:NSDictionary.class] ? manifest : nil;
 
-    NSDictionary *existingConfigurations = original[kSceneConfigurationsKey];
-    if ([existingConfigurations isKindOfClass:NSDictionary.class] &&
-        existingConfigurations[kCarPlayRoleKey]) {
+    NSDictionary *existing = original[kSceneConfigurationsKey];
+    if ([existing isKindOfClass:NSDictionary.class] && existing[kCarPlayRoleKey]) {
         return original; // genuinely CarPlay-capable already
     }
 
     NSMutableDictionary *configurations =
-        [existingConfigurations isKindOfClass:NSDictionary.class]
-            ? [existingConfigurations mutableCopy]
-            : [NSMutableDictionary new];
+        [existing isKindOfClass:NSDictionary.class] ? [existing mutableCopy]
+                                                    : [NSMutableDictionary new];
 
     // No UISceneDelegateClassName: we cannot know the app's delegate, and the
     // app-side tweak rewrites this role onto the app's own default window-scene
-    // configuration anyway. CarKit only needs the role to be present.
+    // configuration anyway. The role only has to be present.
     configurations[kCarPlayRoleKey] = @[ @{ @"UISceneConfigurationName" : @"CarSurf" } ];
 
     NSMutableDictionary *result = original ? [original mutableCopy] : [NSMutableDictionary new];
@@ -86,307 +349,31 @@ static NSDictionary *CSManifestWithCarPlayRole(id manifest, NSString *bundleID) 
     return result;
 }
 
-#pragma mark - Hooks
-
 static id (*orig_objectForInfoDictionaryKey)(id, SEL, NSString *, Class);
 
 static id cs_objectForInfoDictionaryKey(id self, SEL _cmd, NSString *key, Class expected) {
     id value = orig_objectForInfoDictionaryKey(self, _cmd, key, expected);
 
-    if ([key isEqualToString:kStarkLaunchModesKey]) {
-        if (value) return value; // already declares it — nothing to add
+    @try {
+        if ([key isEqualToString:kStarkLaunchModesKey]) {
+            if (value) return value; // already declares it
+            NSString *bundleID = nil;
+            if (!CSShouldSpoofProxy(self, &bundleID)) return value;
+            if (expected && expected != NSArray.class) return value;
+            CSVLog("declared SBStarkLaunchModes for %s", bundleID.UTF8String);
+            return @[ @"Default" ];
+        }
+
+        if (![key isEqualToString:kSceneManifestKey]) return value;
+        if (expected && expected != NSDictionary.class) return value;
+
         NSString *bundleID = nil;
         if (!CSShouldSpoofProxy(self, &bundleID)) return value;
-        CSVLog("SBStarkLaunchModes spoofed for %s", bundleID.UTF8String);
-        return @[ @"Default" ];
+        return CSManifestWithCarPlayRole(value, bundleID);
+    } @catch (id exception) {
+        CSLog("info-dictionary spoof suppressed an exception");
+        return value;
     }
-
-    if (![key isEqualToString:kSceneManifestKey]) return value;
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return value;
-
-    return CSManifestWithCarPlayRole(value, bundleID);
-}
-
-static id (*orig_objectsForInfoDictionaryKeys)(id, SEL, NSArray *);
-
-static id cs_objectsForInfoDictionaryKeys(id self, SEL _cmd, NSArray *keys) {
-    id values = orig_objectsForInfoDictionaryKeys(self, _cmd, keys);
-    if (![keys containsObject:kSceneManifestKey]) return values;
-    if (![values isKindOfClass:NSDictionary.class]) return values;
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return values;
-
-    NSMutableDictionary *patched = [values mutableCopy];
-    patched[kSceneManifestKey] =
-        CSManifestWithCarPlayRole(patched[kSceneManifestKey], bundleID);
-    return patched;
-}
-
-static id (*orig_infoDictionary)(id, SEL);
-
-static id cs_infoDictionary(id self, SEL _cmd) {
-    id info = orig_infoDictionary(self, _cmd);
-    if (![info isKindOfClass:NSDictionary.class]) return info;
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return info;
-
-    NSMutableDictionary *patched = [info mutableCopy];
-    patched[kSceneManifestKey] =
-        CSManifestWithCarPlayRole(patched[kSceneManifestKey], bundleID);
-    return patched;
-}
-
-#pragma mark - NSBundle path
-
-// LSBundleProxy's info-dictionary accessors are never consulted for a
-// non-CarPlay app, so CarKit is not reading capability from LaunchServices. The
-// declaration carries a -bundlePath, which points at CarKit loading each app
-// bundle's Info.plist itself. These hooks cover that route.
-//
-// The bundle-identifier check short-circuits before any dictionary work, so the
-// cost on SpringBoard's own (very frequent) info-dictionary reads is one string
-// comparison.
-
-// DANGER: -[NSBundle bundleIdentifier] is itself implemented on top of the info
-// dictionary. Asking a bundle for its identifier from inside these hooks recurses
-// until the stack dies, which takes SpringBoard with it. The identifier is
-// therefore read out of the raw dictionary, and a reentrancy guard backs that up.
-//
-// Because a mistake here costs a boot loop rather than a missing feature, the
-// whole NSBundle route is opt-in: set spoofViaNSBundle in the preferences.
-
-static _Thread_local BOOL gInsideBundleHook = NO;
-
-static BOOL CSNSBundleSpoofEnabled(void) {
-    static BOOL enabled;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        for (NSString *path in @[ @"/var/mobile/Library/Preferences/com.pavunato.carsurf.plist",
-                                  @"/var/tmp/.carsurf-relay.plist" ]) {
-            NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:path];
-            if (!prefs) continue;
-            enabled = [prefs[@"spoofViaNSBundle"] boolValue];
-            break;
-        }
-    });
-    return enabled;
-}
-
-/// Identifier straight out of the dictionary — never via -bundleIdentifier.
-static NSString *CSIdentifierFromInfo(NSDictionary *info) {
-    id value = info[@"CFBundleIdentifier"];
-    return [value isKindOfClass:NSString.class] ? value : nil;
-}
-
-static id (*orig_bundleObjectForInfoDictionaryKey)(id, SEL, NSString *);
-
-static id cs_bundleObjectForInfoDictionaryKey(id self, SEL _cmd, NSString *key) {
-    id value = orig_bundleObjectForInfoDictionaryKey(self, _cmd, key);
-    if (gInsideBundleHook || ![key isEqualToString:kSceneManifestKey]) return value;
-
-    CSConfig *config = CSConfig.sharedConfig;
-    if (CSSpoofSuppressed() || !config.isEnabled) return value;
-
-    gInsideBundleHook = YES;
-    // Calling the original directly keeps this lookup out of our own hook.
-    id identifier = orig_bundleObjectForInfoDictionaryKey(self, _cmd, @"CFBundleIdentifier");
-    NSString *bundleID = [identifier isKindOfClass:NSString.class] ? identifier : nil;
-    id result = value;
-    if (bundleID && [config isBundleEnabled:bundleID]) {
-        result = CSManifestWithCarPlayRole(value, bundleID);
-    }
-    gInsideBundleHook = NO;
-    return result;
-}
-
-static id (*orig_bundleInfoDictionary)(id, SEL);
-
-static id cs_bundleInfoDictionary(id self, SEL _cmd) {
-    id info = orig_bundleInfoDictionary(self, _cmd);
-    if (gInsideBundleHook || ![info isKindOfClass:NSDictionary.class]) return info;
-
-    CSConfig *config = CSConfig.sharedConfig;
-    if (CSSpoofSuppressed() || !config.isEnabled) return info;
-
-    NSString *bundleID = CSIdentifierFromInfo(info);
-    if (!bundleID || ![config isBundleEnabled:bundleID]) return info;
-
-    gInsideBundleHook = YES;
-    NSMutableDictionary *patched = [info mutableCopy];
-    patched[kSceneManifestKey] =
-        CSManifestWithCarPlayRole(patched[kSceneManifestKey], bundleID);
-    gInsideBundleHook = NO;
-    return patched;
-}
-
-static void CSInstallBundleManifestSpoof(void) {
-    if (!CSNSBundleSpoofEnabled()) {
-        CSLog("NSBundle manifest spoof disabled (set spoofViaNSBundle to enable)");
-        return;
-    }
-
-    BOOL key = CSSwizzleInstanceMethod(
-        NSBundle.class, @selector(objectForInfoDictionaryKey:),
-        (IMP)cs_bundleObjectForInfoDictionaryKey,
-        (IMP *)&orig_bundleObjectForInfoDictionaryKey);
-
-    BOOL whole = CSSwizzleInstanceMethod(
-        NSBundle.class, @selector(infoDictionary),
-        (IMP)cs_bundleInfoDictionary, (IMP *)&orig_bundleInfoDictionary);
-
-    CSLog("NSBundle manifest spoof installed (key=%d, whole=%d)", key, whole);
-}
-
-#pragma mark - Entitlement declaration spoof (the actual G1 admission gate)
-
-// The scene-manifest route above is necessary but not sufficient: CarKit never
-// even asks a non-candidate app for its manifest. Measurement narrowed the real
-// gate to +[CRCarPlayAppDeclaration requiredEntitlementKeys], fetched at
-// hook-install time so a renamed/rebalanced key list on a future release is
-// picked up automatically rather than hardcoded:
-//
-//   com.apple.developer.carplay-{parking,communication,audio,public-safety,
-//     charging,driving-task,maps,protocols,messaging,calling,quick-ordering,
-//     fueling}, com.apple.developer.playable-content, CARCapableApp,
-//   SBStarkCapable   (requiredInfoKeys: SBStarkLaunchModes)
-//
-// Reading the actual code signatures on-device (ldid -e) shows two disjoint
-// routes apps take through this list:
-//
-//   /Applications/CarCamera.app       entitlement CARCapableApp = true
-//   /Applications/CarPlaySettings.app entitlement CARCapableApp = true
-//   /Applications/MobilePhone.app     entitlement SBStarkCapable = true,
-//                                     Info.plist SBStarkLaunchModes = [Default, Siri]
-//                                     (no com.apple.developer.carplay-* keys at all)
-//
-// So CARCapableApp is the literal, documented-by-Apple's-own-usage flag for "this
-// app renders on the CarPlay UIWindowScene" — exactly CarCamera's mechanism, which
-// is the one this whole approach already targets. Safari's compiled entitlements
-// obviously carry none of this and cannot be changed without re-signing, but
-// CarKit does not read the live code signature for this decision: it goes through
-// LSBundleProxy's declared-entitlement accessors, the same cached-metadata layer
-// the manifest spoof above already lies to. Spoofing these getters is cosmetic to
-// CarKit's bookkeeping, not a code-signature or sandbox change — it grants no real
-// entitlement to the process, same as the existing manifest spoof.
-
-static NSArray<NSString *> *CSRequiredEntitlementKeys(void) {
-    static NSArray<NSString *> *keys;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        Class declaration = CSLookupClass("CRCarPlayAppDeclaration");
-        SEL sel = sel_getUid("requiredEntitlementKeys");
-        id result = nil;
-        if (declaration && [(id)declaration respondsToSelector:sel]) {
-            result = ((id (*)(id, SEL))objc_msgSend)(declaration, sel);
-        }
-        keys = [result isKindOfClass:NSArray.class] ? result : @[ @"CARCapableApp" ];
-        CSVLog("required entitlement keys for a CarPlay declaration: %s",
-                 [[keys componentsJoinedByString:@", "] UTF8String]);
-    });
-    return keys;
-}
-
-/// True if this is the CarCamera-style capability flag we actually want: it
-/// grants the plain UIWindowScene CarPlay role, not a template capability like
-/// -carplay-audio that would additionally advertise the app as, say, a media
-/// source CarKit expects to drive with the Now Playing template.
-static BOOL CSIsCapabilityFlagKey(NSString *key) {
-    return [key isEqualToString:@"CARCapableApp"] || [key isEqualToString:@"SBStarkCapable"];
-}
-
-static id (*orig_entitlementValueForKey)(id, SEL, NSString *, Class);
-
-static id cs_entitlementValueForKey(id self, SEL _cmd, NSString *key, Class expected) {
-    id value = orig_entitlementValueForKey(self, _cmd, key, expected);
-    if (value) return value; // already entitled for real — nothing to add
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return value;
-    if (!CSIsCapabilityFlagKey(key)) return value;
-
-    CSVLog("entitlementValueForKey:%s spoofed YES for %s", key.UTF8String, bundleID.UTF8String);
-    return @YES;
-}
-
-static id (*orig_entitlementValuesForKeys)(id, SEL, NSArray *);
-
-static id cs_entitlementValuesForKeys(id self, SEL _cmd, NSArray *keys) {
-    id result = orig_entitlementValuesForKeys(self, _cmd, keys);
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return result;
-
-    NSMutableDictionary *patched =
-        [result isKindOfClass:NSDictionary.class] ? [result mutableCopy] : [NSMutableDictionary new];
-    BOOL changed = NO;
-    for (NSString *key in keys) {
-        if (patched[key] || !CSIsCapabilityFlagKey(key)) continue;
-        patched[key] = @YES;
-        changed = YES;
-    }
-    if (changed) {
-        CSVLog("entitlementValuesForKeys spoofed capability flags for %s", bundleID.UTF8String);
-    }
-    return patched;
-}
-
-/// -entitlements / -_entitlements hand back the whole declared-entitlement
-/// dictionary; some CarKit paths may read it directly rather than asking for
-/// individual keys, so both routes get the same capability flags merged in.
-static id (*orig_entitlements)(id, SEL);
-
-static id cs_entitlements(id self, SEL _cmd) {
-    id value = orig_entitlements(self, _cmd);
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return value;
-
-    NSMutableDictionary *patched =
-        [value isKindOfClass:NSDictionary.class] ? [value mutableCopy] : [NSMutableDictionary new];
-    if (!patched[@"CARCapableApp"]) patched[@"CARCapableApp"] = @YES;
-    return patched;
-}
-
-static id (*orig_underscoreEntitlements)(id, SEL);
-
-static id cs_underscoreEntitlements(id self, SEL _cmd) {
-    id value = orig_underscoreEntitlements(self, _cmd);
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(self, &bundleID)) return value;
-
-    NSMutableDictionary *patched =
-        [value isKindOfClass:NSDictionary.class] ? [value mutableCopy] : [NSMutableDictionary new];
-    if (!patched[@"CARCapableApp"]) patched[@"CARCapableApp"] = @YES;
-    return patched;
-}
-
-static void CSInstallEntitlementDeclarationSpoof(Class proxy) {
-    CSRequiredEntitlementKeys(); // logs the fetched list once, verbose only
-
-    BOOL single = CSSwizzleInstanceMethod(
-        proxy, @selector(entitlementValueForKey:ofClass:),
-        (IMP)cs_entitlementValueForKey, (IMP *)&orig_entitlementValueForKey);
-
-    BOOL multiple = CSSwizzleInstanceMethod(
-        proxy, @selector(entitlementValuesForKeys:),
-        (IMP)cs_entitlementValuesForKeys, (IMP *)&orig_entitlementValuesForKeys);
-
-    BOOL whole = CSSwizzleInstanceMethod(
-        proxy, @selector(entitlements),
-        (IMP)cs_entitlements, (IMP *)&orig_entitlements);
-
-    BOOL wholeUnderscore = CSSwizzleInstanceMethod(
-        proxy, sel_getUid("_entitlements"),
-        (IMP)cs_underscoreEntitlements, (IMP *)&orig_underscoreEntitlements);
-
-    CSLog("entitlement declaration spoof installed (single=%d, multiple=%d, "
-            "whole=%d, wholeUnderscore=%d)",
-            single, multiple, whole, wholeUnderscore);
 }
 
 #pragma mark - Install
@@ -394,26 +381,38 @@ static void CSInstallEntitlementDeclarationSpoof(Class proxy) {
 void CSInstallSceneManifestSpoof(void) {
     Class proxy = CSLookupClass("LSBundleProxy");
     if (!proxy) {
-        CSLog("WARNING: LSBundleProxy absent — allowlisted apps cannot be "
-                "advertised to CarKit and will not reach the dashboard.");
+        CSLog("WARNING: LSBundleProxy absent — runtime CarPlay admission is "
+              "unavailable and allowlisted apps will not reach the dashboard.");
         return;
     }
 
-    BOOL single = CSSwizzleInstanceMethod(
+    BOOL three = CSSwizzleInstanceMethod(
+        proxy, sel_getUid("entitlementValueForKey:ofClass:valuesOfClass:"),
+        (IMP)cs_entitlementValueForKey3, (IMP *)&orig_entitlementValueForKey3);
+
+    BOOL two = CSSwizzleInstanceMethod(
+        proxy, @selector(entitlementValueForKey:ofClass:),
+        (IMP)cs_entitlementValueForKey2, (IMP *)&orig_entitlementValueForKey2);
+
+    BOOL bulk = CSSwizzleInstanceMethod(
+        proxy, @selector(entitlementValuesForKeys:),
+        (IMP)cs_entitlementValuesForKeys, (IMP *)&orig_entitlementValuesForKeys);
+
+    BOOL info = CSSwizzleInstanceMethod(
         proxy, @selector(objectForInfoDictionaryKey:ofClass:),
         (IMP)cs_objectForInfoDictionaryKey, (IMP *)&orig_objectForInfoDictionaryKey);
 
-    BOOL multiple = CSSwizzleInstanceMethod(
-        proxy, @selector(objectsForInfoDictionaryKeys:),
-        (IMP)cs_objectsForInfoDictionaryKeys, (IMP *)&orig_objectsForInfoDictionaryKeys);
+    CSLog("runtime admission installed (3-arg=%d, 2-arg=%d, bulk=%d, info=%d)",
+          three, two, bulk, info);
 
-    BOOL whole = CSSwizzleInstanceMethod(
-        proxy, @selector(_infoDictionary),
-        (IMP)cs_infoDictionary, (IMP *)&orig_infoDictionary);
+    // SpringBoard's half of the gate. CarPlay's DashBoard is answered by the
+    // getters above; SpringBoard owns the dashboard *layout* and reads through
+    // the cached-values object instead, so both have to be covered or the app is
+    // admitted to the library and still never appears.
+    CSInstallCachedValuesHooks();
 
-    CSLog("scene manifest spoof installed (single=%d, multiple=%d, whole=%d)",
-            single, multiple, whole);
-
-    CSInstallBundleManifestSpoof();
-    CSInstallEntitlementDeclarationSpoof(proxy);
+    if (!three && !two) {
+        CSLog("WARNING: no entitlement value getter was hooked; apps cannot be "
+              "admitted at runtime on this release.");
+    }
 }

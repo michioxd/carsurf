@@ -49,11 +49,21 @@
 static NSString *const kPrefsPath =
     @"/var/mobile/Library/Preferences/com.pavunato.carsurf.plist";
 static NSString *const kStateDirectory = @"/var/jb/Library/CarSurf";
+/// Must match CSConfig's first relay candidate.
+static NSString *const kRelayPath = @"/var/jb/Library/CarSurf/relay.plist";
 static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
 
 static NSString *const kLdid = @"/var/jb/usr/bin/ldid";
 static NSString *const kJbctl = @"/var/jb/usr/bin/jbctl";
 static NSString *const kUicache = @"/var/jb/usr/bin/uicache";
+
+// There is deliberately no RootHide special case here. An earlier build skipped
+// patching entirely when AutoPatches.dylib was present, on the theory that
+// CSSceneManifestSpoof would admit the app at runtime instead. That runtime route
+// does not work and crashes SpringBoard (see CSSystem.m), and the skip was worse
+// than useless: it reported CSApplyPatchResultPatched without touching the app,
+// so the app silently never qualified. RootHide gets the same on-disk patch as
+// every other jailbreak — measured working on iOS 16.7.12.
 
 /// Keep the normal CarSurf log and the user-shareable patch transcript in sync
 /// for every helper diagnostic. Other processes continue using CSLog normally.
@@ -221,9 +231,16 @@ static NSString *CSAppVersion(NSString *bundleID) {
 
 #pragma mark - Signing
 
-/// Adds the new cdhash to the jailbreak's trustcache. Without this the re-signed
-/// binary is refused execution.
+/// Adds a newly-signed executable to the jailbreak's trustcache. RootHide's
+/// jbctl expects a Mach-O path; older Dopamine jbctl builds expect a cdhash.
+/// Try the path API first, then retain the cdhash form strictly as a fallback.
 static BOOL CSTrustExecutable(NSString *executablePath) {
+    if (CSRun(@[ kJbctl, @"trustcache", @"add", executablePath ], nil) == 0) {
+        return YES;
+    }
+
+    CSLog("path-based trustcache add failed for %s; trying legacy cdhash API",
+          executablePath.UTF8String);
     NSString *dump = CSScratchPath(@"cdhash", @"txt");
     if (CSRun(@[ kLdid, @"-h", executablePath ], dump) != 0) {
         [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
@@ -268,16 +285,17 @@ static BOOL CSSignWithEntitlements(NSString *executablePath, NSString *entitleme
 /// on the phone, not just CarPlay — because dyld hit an untrusted framework
 /// before app code ever ran. tools/carsurf-patch-app.sh always did this; the
 /// daemon has to as well. See that script for the original recipe this mirrors.
-static void CSTrustFrameworks(NSString *bundlePath) {
+static BOOL CSTrustFrameworks(NSString *bundlePath) {
     NSString *frameworksPath = [bundlePath stringByAppendingPathComponent:@"Frameworks"];
     NSFileManager *fileManager = NSFileManager.defaultManager;
     BOOL isDirectory = NO;
     if (![fileManager fileExistsAtPath:frameworksPath isDirectory:&isDirectory] || !isDirectory) {
-        return;
+        return YES;
     }
 
     NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:frameworksPath error:NULL];
     NSUInteger trusted = 0;
+    BOOL succeeded = YES;
     for (NSString *entry in entries) {
         NSString *itemPath = [frameworksPath stringByAppendingPathComponent:entry];
         NSString *binaryPath;
@@ -296,24 +314,20 @@ static void CSTrustFrameworks(NSString *bundlePath) {
 
         if (!CSTrustExecutable(binaryPath)) {
             CSLog("could not trust framework image %s", binaryPath.UTF8String);
+            succeeded = NO;
             continue;
         }
         trusted++;
 
-        // If dyld already mapped this image before it was trusted (i.e. the app
-        // was ever launched pre-patch, which is the common case), the kernel can
-        // retain a non-platform csblob for its vnode regardless of the trustcache
-        // update. Replacing just the inode with an archival copy forces a fresh
-        // classification on next load — the embedded bytes, signature, owner,
-        // and mode all stay identical.
-        NSString *staged = [binaryPath stringByAppendingFormat:@".carsurf-trusted-%.0f",
-                             NSDate.date.timeIntervalSince1970];
-        if ([fileManager copyItemAtPath:binaryPath toPath:staged error:NULL]) {
-            [fileManager removeItemAtPath:binaryPath error:NULL];
-            [fileManager moveItemAtPath:staged toPath:binaryPath error:NULL];
-        }
+        // Do not replace the framework's inode after trusting it. Frameworks
+        // carrying FairPlay SC_Info metadata (YouTube's Widevine is one) can
+        // bind DRM integrity to the original file identity and crash at launch
+        // if it is copied/deleted/moved, even when its bytes are unchanged. A
+        // successful RootHide/Dopamine trustcache add is sufficient; the app
+        // must be relaunched normally to pick it up.
     }
     CSLog("trusted %lu embedded framework/dylib image(s)", (unsigned long)trusted);
+    return succeeded;
 }
 
 static NSDictionary *CSReadEntitlements(NSString *executablePath) {
@@ -402,8 +416,39 @@ static BOOL CSHasDedicatedSandboxProfile(NSDictionary *entitlements) {
 
 #pragma mark - Patch / revert
 
-static void CSReregister(NSString *bundlePath) {
-    CSRun(@[ kUicache, @"-p", bundlePath ], nil);
+static BOOL CSReregister(NSString *bundlePath) {
+    return CSRun(@[ kUicache, @"-p", bundlePath ], nil) == 0;
+}
+
+/// Writes the two registration inputs CarPlay reads after the executable's
+/// SBStarkCapable entitlement: the Stark launch mode and a CarPlay scene role
+/// based on the app's normal window-scene configuration. This is also used to
+/// repair an interrupted patch where signing succeeded before trustcache or
+/// uicache failed.
+static BOOL CSPrepareCarPlayInfo(NSString *infoPath, NSString *bundleID) {
+    NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:infoPath] mutableCopy];
+    if (!info) {
+        CSLog("failed to read Info.plist for %s", bundleID.UTF8String);
+        return NO;
+    }
+    info[@"SBStarkLaunchModes"] = @[ @"Default" ];
+
+    NSMutableDictionary *manifest = [info[@"UIApplicationSceneManifest"] mutableCopy];
+    NSMutableDictionary *configurations = [manifest[@"UISceneConfigurations"] mutableCopy];
+    id defaultRole = configurations[@"UIWindowSceneSessionRoleApplication"];
+    if (defaultRole && !configurations[@"UIWindowSceneSessionRoleCarPlay"]) {
+        configurations[@"UIWindowSceneSessionRoleCarPlay"] = defaultRole;
+        manifest[@"UISceneConfigurations"] = configurations;
+        manifest[@"UIApplicationSupportsMultipleScenes"] = @YES;
+        info[@"UIApplicationSceneManifest"] = manifest;
+        CSLog("%s: added a native CarPlay window-scene role", bundleID.UTF8String);
+    }
+
+    if (![info writeToFile:infoPath atomically:YES]) {
+        CSLog("failed to write Info.plist for %s", bundleID.UTF8String);
+        return NO;
+    }
+    return YES;
 }
 
 typedef NS_ENUM(NSInteger, CSApplyPatchResult) {
@@ -427,6 +472,17 @@ typedef NS_ENUM(NSInteger, CSApplyPatchResult) {
 static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason) {
     NSString *bundlePath = CSBundlePathForIdentifier(bundleID);
     if (!bundlePath) return CSApplyPatchResultFailed;
+
+    // Before iOS 18 the app is admitted at runtime with its signature intact, so
+    // there is nothing to do on disk — and doing it anyway is destructive. Report
+    // NativeBridged: untouched bundle, but CSApp.m still bridges its CarPlay
+    // scene and CSCarKitPolicy.m still forces template UI off, which is exactly
+    // the shape of a runtime-admitted app.
+    if (CSUsesRuntimeCarPlayAdmission()) {
+        CSLog("%s: admitted at runtime on this iOS release — leaving the bundle "
+              "untouched", bundleID.UTF8String);
+        return CSApplyPatchResultNativeBridged;
+    }
 
     NSString *infoPath = [bundlePath stringByAppendingPathComponent:@"Info.plist"];
     NSString *executablePath = CSExecutablePath(bundlePath);
@@ -483,16 +539,22 @@ static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason)
         return CSApplyPatchResultFailed;
     }
     if ([entitlements[@"SBStarkCapable"] boolValue]) {
-        // Still re-verify framework trust even here: it used to be possible for
-        // a bundle to end up with SBStarkCapable set but its Frameworks/ never
-        // touched (exactly the bug that crashed YouTube Music and Photos on
-        // every launch), and there is no cheaper way to notice that happened
-        // than just checking. CSTrustFrameworks is idempotent, so this costs
-        // one directory listing plus an already-trusted-hash no-op per
-        // framework when nothing is actually wrong.
-        CSTrustFrameworks(bundlePath);
-        CSLog("%s already qualifies — nothing to do", bundleID.UTF8String);
-        return CSApplyPatchResultPatched; // idempotent
+        // A prior attempt can have changed this entitlement then failed before
+        // the trustcache, Info.plist, or LaunchServices steps. Do not treat the
+        // entitlement bit alone as success; complete (or fail) every remaining
+        // prerequisite on every retry.
+        if (!CSTrustExecutable(executablePath) || !CSTrustFrameworks(bundlePath)) {
+            if (outReason) *outReason = @"CarSurf could not add this app or one of its "
+                                        @"embedded frameworks to the jailbreak trustcache.";
+            return CSApplyPatchResultFailed;
+        }
+        if (!CSPrepareCarPlayInfo(infoPath, bundleID) || !CSReregister(bundlePath)) {
+            if (outReason) *outReason = @"CarSurf could not register this app's CarPlay "
+                                        @"launch configuration with the system.";
+            return CSApplyPatchResultFailed;
+        }
+        CSLog("%s repaired and verified as CarPlay-qualified", bundleID.UTF8String);
+        return CSApplyPatchResultPatched;
     }
 
     // --- back up first, always ---------------------------------------------
@@ -530,38 +592,27 @@ static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason)
     if (!signed_) return CSApplyPatchResultFailed;
 
     // The main executable is now a platform process — see CSTrustFrameworks.
-    CSTrustFrameworks(bundlePath);
-
-    // --- Info.plist --------------------------------------------------------
-    NSMutableDictionary *info = [[NSDictionary dictionaryWithContentsOfFile:infoPath] mutableCopy];
-    info[@"SBStarkLaunchModes"] = @[ @"Default" ];
-
-    // An app that already declares scene configurations can be given the CarPlay
-    // window-scene role natively, pointing at its own delegate — the shape
-    // CarCamera.app uses. That yields a real independent scene rather than the
-    // transplant fallback, so prefer it whenever the app has a manifest.
-    NSMutableDictionary *manifest = [info[@"UIApplicationSceneManifest"] mutableCopy];
-    NSMutableDictionary *configurations = [manifest[@"UISceneConfigurations"] mutableCopy];
-    id defaultRole = configurations[@"UIWindowSceneSessionRoleApplication"];
-    if (defaultRole && !configurations[@"UIWindowSceneSessionRoleCarPlay"]) {
-        configurations[@"UIWindowSceneSessionRoleCarPlay"] = defaultRole;
-        manifest[@"UISceneConfigurations"] = configurations;
-        manifest[@"UIApplicationSupportsMultipleScenes"] = @YES;
-        info[@"UIApplicationSceneManifest"] = manifest;
-        CSLog("%s: added a native CarPlay window-scene role", bundleID.UTF8String);
-    }
-
-    if (![info writeToFile:infoPath atomically:YES]) {
-        CSLog("failed to write Info.plist for %s", bundleID.UTF8String);
+    if (!CSTrustFrameworks(bundlePath)) {
+        if (outReason) *outReason = @"CarSurf could not add an embedded framework to "
+                                    @"the jailbreak trustcache.";
         return CSApplyPatchResultFailed;
     }
-
-    CSReregister(bundlePath);
+    if (!CSPrepareCarPlayInfo(infoPath, bundleID) || !CSReregister(bundlePath)) {
+        if (outReason) *outReason = @"CarSurf could not register this app's CarPlay "
+                                    @"launch configuration with the system.";
+        return CSApplyPatchResultFailed;
+    }
     CSLog("qualified %s for CarPlay", bundleID.UTF8String);
     return CSApplyPatchResultPatched;
 }
 
 static void CSRevertPatch(NSString *bundleID) {
+    // Nothing was ever patched here, and "reverting" would re-sign the binary —
+    // which cannot restore Apple's original CMS signature and leaves the app
+    // ad-hoc signed. On RootHide that is fatal: the trustcache refuses app
+    // bundles, so the app stops launching entirely.
+    if (CSUsesRuntimeCarPlayAdmission()) return;
+
     NSString *backupDirectory = CSBackupDirectory(bundleID);
     NSString *infoBackup = [backupDirectory stringByAppendingPathComponent:@"Info.plist"];
     NSString *entitlementsBackup =
@@ -626,6 +677,64 @@ static void CSAttemptAndRecordPatch(NSString *bundleID) {
             CSPatchLogAppend(@"========== FAILED %@ ==========", bundleID);
             break;
     }
+}
+
+/// Mirrors the preferences to a path a sandboxed app can actually read.
+///
+/// An app sandbox refuses /var/mobile/Library/Preferences outright, so without
+/// this file CSConfig finds nothing, every app tweak decides it is not enabled,
+/// and the car scene is never bridged — the app reaches the CarPlay dashboard on
+/// the strength of its on-disk patch alone and then renders a blank screen.
+///
+/// CSRelay.m does the same job from SpringBoard, but only from SpringBoard: a
+/// fresh install that has not resprung yet has no relay at all, which is exactly
+/// how the blank-screen failure was reproduced on RootHide. This daemon runs from
+/// boot and re-runs on every preference change, so writing it here as well makes
+/// the relay independent of SpringBoard's injection state.
+static void CSWriteRelay(void) {
+    NSDictionary *preferences = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
+    if (!preferences) {
+        CSLog("no preferences at %s; leaving relay untouched", kPrefsPath.UTF8String);
+        return;
+    }
+
+    NSError *error = nil;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:preferences
+                                                             format:NSPropertyListBinaryFormat_v1_0
+                                                            options:0
+                                                              error:&error];
+    if (!data) {
+        CSLog("relay serialization failed: %s", error.localizedDescription.UTF8String);
+        return;
+    }
+
+    NSFileManager *fileManager = NSFileManager.defaultManager;
+    [fileManager createDirectoryAtPath:kStateDirectory
+           withIntermediateDirectories:YES
+                            attributes:@{ NSFilePosixPermissions : @(0755) }
+                                 error:NULL];
+    // The directory may predate this code (or have been created by the package's
+    // postinst) with tighter permissions; an app that cannot traverse it cannot
+    // read the relay no matter how the file itself is chmodded.
+    chmod(kStateDirectory.fileSystemRepresentation, 0755);
+
+    // Write-then-rename so a reader never observes a half-written file.
+    NSString *temporary = [kRelayPath stringByAppendingPathExtension:@"tmp"];
+    if (![data writeToFile:temporary atomically:NO]) {
+        CSLog("relay write to %s failed", temporary.UTF8String);
+        return;
+    }
+    chmod(temporary.fileSystemRepresentation, 0644);
+
+    [fileManager removeItemAtPath:kRelayPath error:NULL];
+    if (![fileManager moveItemAtPath:temporary toPath:kRelayPath error:&error]) {
+        CSLog("relay rename failed: %s", error.localizedDescription.UTF8String);
+        [fileManager removeItemAtPath:temporary error:NULL];
+        return;
+    }
+
+    CSLog("relay updated at %s (%lu bytes)", kRelayPath.UTF8String,
+          (unsigned long)data.length);
 }
 
 static void CSReconcile(void) {
@@ -701,14 +810,39 @@ int main(int argc, char *argv[]) {
         [NSFileManager.defaultManager createDirectoryAtPath:kStateDirectory
                                withIntermediateDirectories:YES attributes:nil error:NULL];
 
+        // Publish the app-readable config before patching anything: an app that
+        // launches during a long reconcile should still find a current relay.
+        CSWriteRelay();
+
+        int reloadToken = 0;
+
+        // Where admission happens at runtime there is nothing to patch, and the
+        // daemon exists for one job only: writing the relay. It cannot simply be
+        // dropped from the package — a sandboxed app cannot read the preferences
+        // plist, and SpringBoard's own copy of this writer (CSRelay.m) fails on
+        // RootHide, so without this process every app tweak reads enabled=0 and
+        // renders a blank CarPlay screen. Registering no patch handlers also means
+        // a stray "patch now" request from an older Settings build cannot touch a
+        // bundle.
+        if (CSUsesRuntimeCarPlayAdmission()) {
+            CSLog("runtime admission release — relay only, no patching");
+            notify_register_dispatch(kChangeNotification.UTF8String, &reloadToken,
+                                     dispatch_get_main_queue(), ^(int t) {
+                CSLog("preferences changed");
+                CSWriteRelay();
+            });
+            dispatch_main();
+            return 0;
+        }
+
         // Reconcile once at load, so a change made while the daemon was down (or a
         // reboot) still converges.
         CSReconcile();
 
-        int reloadToken = 0;
         notify_register_dispatch(kChangeNotification.UTF8String, &reloadToken,
                                  dispatch_get_main_queue(), ^(int t) {
             CSLog("preferences changed");
+            CSWriteRelay();
             CSReconcile();
         });
 

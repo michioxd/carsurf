@@ -2,6 +2,24 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/// YES when CarPlay admission is granted at runtime rather than by patching the
+/// app on disk — i.e. everything before iOS 18.
+///
+/// On iOS 16/17 DashBoard filters the app library by asking LSBundleProxy for
+/// entitlements (`_proxyPassesInclusionFilter`), so CSSceneManifestSpoof.m can
+/// admit an app with its Apple signature completely intact. iOS 18 moved the gate
+/// into CarKit, which never consults LaunchServices, and there the on-disk patch
+/// is the only route.
+///
+/// Patching where runtime admission applies is not merely redundant, it breaks
+/// apps: on RootHide the trustcache refuses every path under
+/// /var/containers/Bundle/Application, so a re-signed binary is ad-hoc signed,
+/// untrusted, and killed at exec with no crash report. Callers must therefore
+/// leave the bundle strictly alone when this returns YES — reverting is equally
+/// destructive, since re-signing can never restore Apple's original CMS
+/// signature.
+BOOL CSUsesRuntimeCarPlayAdmission(void);
+
 /// The on-disk "indicator" for whether an app currently qualifies for CarPlay.
 ///
 /// carsurf-helperd is the only writer (it runs as root and is the only process that

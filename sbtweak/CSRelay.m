@@ -15,6 +15,12 @@ static NSString *const kRelayPath = @"/var/jb/Library/CarSurf/relay.plist";
 // but it is only a Recommends, so SpringBoard also drops a world-readable copy of
 // the preferences where a sandboxed app can reach it. Nothing secret lives in
 // there — it is an allowlist of bundle identifiers and a few layout numbers.
+//
+// carsurf-helperd writes the identical file for the identical reason. That is
+// deliberate redundancy, not a leftover: this copy only exists once SpringBoard
+// has been restarted with the tweak injected, and a just-installed package that
+// has not resprung yet would otherwise leave every app tweak inert. Both writers
+// are atomic and produce the same bytes, so whichever runs last is correct.
 static void CSWriteRelay(void) {
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
     if (!prefs) {

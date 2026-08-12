@@ -137,9 +137,13 @@
         // The one thing this whole screen exists to do: everything below is
         // detail for an app that's already on.
         PSSpecifier *enableGroup = [PSSpecifier groupSpecifierWithName:nil];
-        [enableGroup setProperty:@"Puts this app on the CarPlay dashboard. "
-                                 @"carsurf-helperd patches it in the background — "
-                                 @"see status below."
+        [enableGroup setProperty:CSUsesRuntimeCarPlayAdmission()
+                                     ? @"Puts this app on the CarPlay dashboard. "
+                                       @"Nothing on disk is modified — the app keeps "
+                                       @"its original signature."
+                                     : @"Puts this app on the CarPlay dashboard. "
+                                       @"carsurf-helperd patches it in the background — "
+                                       @"see status below."
                           forKey:@"footerText"];
         [result addObject:enableGroup];
 
@@ -153,34 +157,40 @@
                                               edit:Nil];
         [result addObject:enable];
 
-        // Patching is manual for now: nothing on-device notices an app update by
-        // itself, so if YouTube (or any enabled app) drops off CarPlay after
-        // updating, this is where the user comes to fix it.
-        _carsurfStatusGroup = [PSSpecifier groupSpecifierWithName:@"CarPlay Qualification"];
-        [_carsurfStatusGroup setProperty:self.carsurfPatchStatusText forKey:@"footerText"];
-        [result addObject:_carsurfStatusGroup];
+        // The whole qualification section only means something where the app has
+        // to be patched on disk. Before iOS 18 admission happens at runtime and
+        // the bundle is never touched, so a status line, a "Patch Now" button and
+        // a patch log would all describe work that never runs.
+        if (!CSUsesRuntimeCarPlayAdmission()) {
+            // Patching is manual for now: nothing on-device notices an app update
+            // by itself, so if YouTube (or any enabled app) drops off CarPlay
+            // after updating, this is where the user comes to fix it.
+            _carsurfStatusGroup = [PSSpecifier groupSpecifierWithName:@"CarPlay Qualification"];
+            [_carsurfStatusGroup setProperty:self.carsurfPatchStatusText forKey:@"footerText"];
+            [result addObject:_carsurfStatusGroup];
 
-        PSSpecifier *patchNow =
-            [PSSpecifier preferenceSpecifierNamed:@"Patch Now"
-                                            target:self
-                                               set:NULL
-                                               get:NULL
-                                            detail:Nil
-                                              cell:PSButtonCell
-                                              edit:Nil];
-        patchNow.buttonAction = @selector(carsurfPatchNow);
-        [result addObject:patchNow];
+            PSSpecifier *patchNow =
+                [PSSpecifier preferenceSpecifierNamed:@"Patch Now"
+                                                target:self
+                                                   set:NULL
+                                                   get:NULL
+                                                detail:Nil
+                                                  cell:PSButtonCell
+                                                  edit:Nil];
+            patchNow.buttonAction = @selector(carsurfPatchNow);
+            [result addObject:patchNow];
 
-        PSSpecifier *patchLog =
-            [PSSpecifier preferenceSpecifierNamed:@"View Live Patch Log"
-                                            target:self
-                                               set:NULL
-                                               get:NULL
-                                            detail:CSPatchLogController.class
-                                              cell:PSLinkCell
-                                              edit:Nil];
-        [patchLog setProperty:self.bundleIdentifier forKey:@"carsurfBundle"];
-        [result addObject:patchLog];
+            PSSpecifier *patchLog =
+                [PSSpecifier preferenceSpecifierNamed:@"View Live Patch Log"
+                                                target:self
+                                                   set:NULL
+                                                   get:NULL
+                                                detail:CSPatchLogController.class
+                                                  cell:PSLinkCell
+                                                  edit:Nil];
+            [patchLog setProperty:self.bundleIdentifier forKey:@"carsurfBundle"];
+            [result addObject:patchLog];
+        }
 
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
         [group setProperty:@"Choose the viewport and whether the app should build its "
