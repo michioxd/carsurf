@@ -1,0 +1,108 @@
+#import <Foundation/Foundation.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+/// The on-disk "indicator" for whether an app currently qualifies for CarPlay.
+///
+/// carsurf-helperd is the only writer (it runs as root and is the only process that
+/// can re-sign a bundle). Everyone else — the CarKit policy hook in SpringBoard,
+/// the Settings UI — only ever reads this. That split matters after an App Store
+/// update: the update silently strips the SBStarkCapable entitlement the helper
+/// added, and until the helper re-patches the bundle (manually, for now — see
+/// CSPatchRequestSubmit), this file is the only place that recorded fact is
+/// visible from. Trusting the user's "enabled" toggle alone would say the app is
+/// fine when its on-disk patch has actually been wiped.
+///
+/// Stored at /var/jb/Library/CarSurf/patched.plist, the same directory
+/// CSConfig's relay already proves reachable from every process that needs it
+/// (see CSRelay.m) — root-owned, mobile-writable, world-readable.
+typedef NS_ENUM(NSInteger, CSPatchStatus) {
+    /// No patch has ever been attempted, or the state file could not be read.
+    CSPatchStatusUnknown = 0,
+    /// The most recent patch attempt succeeded and is believed to still be in
+    /// effect. Not re-verified against the live binary on every read — only
+    /// carsurf-helperd re-checks that, on reconcile or on a manual request.
+    CSPatchStatusPatched,
+    /// The most recent patch attempt failed; see -failureReason.
+    CSPatchStatusFailed,
+    /// The app already ships with real, Apple-issued CarPlay entitlements
+    /// (CARCapableApp / com.apple.developer.carplay-* / playable-content), and
+    /// runs more than one CarPlay-family scene concurrently (a Dashboard
+    /// and/or Instrument Cluster scene alongside its main template scene, e.g.
+    /// Waze). carsurf-helperd never touches its binary, and CSApp.m installs
+    /// no bridge hooks — rewriting one of several scenes UIKit and the app
+    /// coordinate together is what crashed Waze; see CSApp.m for the full
+    /// story. CSCarKitPolicy.m must NOT force launchUsingTemplateUI off for
+    /// one of these: nothing bridges its scene, so CarKit's own template
+    /// admission has to stay in charge or the result is a blank screen.
+    CSPatchStatusNative,
+    /// Also has real Apple-issued CarPlay entitlements, but only the one plain
+    /// CarPlay scene role (e.g. YouTube Music) — safe to bridge the same way
+    /// as a patched app, just without ever touching its binary. CSApp.m
+    /// installs the scene bridge for these, and CSCarKitPolicy.m forces
+    /// launchUsingTemplateUI off exactly as it would for CSPatchStatusPatched.
+    CSPatchStatusNativeBridged,
+};
+
+@interface CSPatchRecord : NSObject
+@property (nonatomic, readonly) CSPatchStatus status;
+@property (nonatomic, readonly, nullable) NSDate *updatedAt;
+/// CFBundleShortVersionString observed at the time of this attempt. Display-only
+/// — the daemon does not use it to decide whether to re-patch; it just re-reads
+/// the live entitlement, which is idempotent and version-agnostic.
+@property (nonatomic, readonly, nullable) NSString *appVersion;
+@property (nonatomic, readonly, nullable) NSString *failureReason;
+@end
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/// nil if no record exists (never patched, or state unreadable).
+CSPatchRecord *_Nullable CSPatchStateRead(NSString *bundleIdentifier);
+
+/// Convenience for the common case: YES only for CSPatchStatusPatched. NO for
+/// CSPatchStatusNative — deliberately: see the enum's doc comment. Callers
+/// that want to admit both a bridged app and a native one need to check both.
+BOOL CSPatchStateIsPatched(NSString *_Nullable bundleIdentifier);
+
+/// YES only for CSPatchStatusNative (the complex, hands-off case).
+BOOL CSPatchStateIsNative(NSString *_Nullable bundleIdentifier);
+
+/// YES only for CSPatchStatusNativeBridged.
+BOOL CSPatchStateIsNativeBridged(NSString *_Nullable bundleIdentifier);
+
+/// All bundle identifiers currently recorded as patched. Used by the daemon to
+/// know what to revert when an app is disabled or removed from the allowlist.
+NSArray<NSString *> *CSPatchStateAllPatchedIdentifiers(void);
+
+// --- Writer side: carsurf-helperd only (runs as root). ------------------------
+
+void CSPatchStateRecordSuccess(NSString *bundleIdentifier, NSString *_Nullable appVersion);
+void CSPatchStateRecordNative(NSString *bundleIdentifier, NSString *_Nullable appVersion);
+void CSPatchStateRecordNativeBridged(NSString *bundleIdentifier, NSString *_Nullable appVersion);
+void CSPatchStateRecordFailure(NSString *bundleIdentifier, NSString *_Nullable reason);
+void CSPatchStateRemove(NSString *bundleIdentifier);
+
+// --- Manual "patch now" request queue ---------------------------------------
+//
+// Part 1 is manual for now: the Settings UI writes a request naming the bundle
+// it wants re-checked, then posts the fixed darwin notification below. Darwin
+// notify has no per-bundle payload, so the bundle identifier travels through a
+// small request file in the same mobile-writable directory instead — cheaper
+// than registering one notification name per enabled app.
+
+FOUNDATION_EXPORT NSString *const CSPatchRequestNotification;
+
+/// Settings-process side: queues a bundle for carsurf-helperd to re-check and wakes
+/// it. Safe to call from a sandboxed process — the directory is mobile-writable.
+void CSPatchRequestSubmit(NSString *bundleIdentifier);
+
+/// Daemon side: reads and clears the queued bundle identifiers.
+NSArray<NSString *> *CSPatchRequestTakeAll(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+NS_ASSUME_NONNULL_END

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.pavunato.carsurf.helperd</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/var/jb/usr/local/libexec/carsurf-helperd</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/var/jb/usr/bin:/usr/bin:/bin:/var/jb/usr/sbin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>

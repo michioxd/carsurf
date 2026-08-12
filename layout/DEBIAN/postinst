@@ -1,0 +1,26 @@
+#!/bin/sh
+# SpringBoard runs as mobile and mirrors the preferences into this directory for
+# sandboxed app processes to read. /var/jb/Library is root-owned, so the directory
+# has to be created here, at install time, and handed to mobile.
+set -e
+
+for ROOT in /var/jb /; do
+    [ -d "$ROOT/Library" ] || continue
+    DIR="$ROOT/Library/CarSurf"
+    mkdir -p "$DIR"
+    chown mobile:mobile "$DIR" 2>/dev/null || true
+    chmod 755 "$DIR"
+    break
+done
+
+# The root helper grants the CarPlay entitlement when an app is enabled in Settings;
+# neither the tweak nor Settings can do that themselves.
+PLIST=/var/jb/Library/LaunchDaemons/com.pavunato.carsurf.helperd.plist
+if [ -f "$PLIST" ] && [ -x /var/jb/usr/bin/launchctl ]; then
+    # Unload first, so reinstalling actually picks up the new binary instead of
+    # leaving the previous one running.
+    /var/jb/usr/bin/launchctl unload "$PLIST" 2>/dev/null || true
+    /var/jb/usr/bin/launchctl load -w "$PLIST" 2>/dev/null || true
+fi
+
+exit 0

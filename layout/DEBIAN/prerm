@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stop the helper before its binary is replaced or removed.
+PLIST=/var/jb/Library/LaunchDaemons/com.pavunato.carsurf.helperd.plist
+if [ -f "$PLIST" ] && [ -x /var/jb/usr/bin/launchctl ]; then
+    /var/jb/usr/bin/launchctl unload "$PLIST" 2>/dev/null || true
+fi
+exit 0
