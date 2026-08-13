@@ -36,6 +36,21 @@ void CSInstallTraitOverrides(void);
 /// hook never has to enumerate UIApplication.connectedScenes recursively.
 void CSSetActiveCarScreen(UIScreen *_Nullable screen);
 
+/// The rectangle a bridged app should occupy on the head unit: the display minus
+/// whatever CarPlay's own chrome covers, as reported by the scene rather than
+/// assumed. `window` is used to take the measurement and is left resized to the
+/// full display; the caller positions it. Pass the app's natural window size as
+/// `sourceSize` — Auto layout follows its orientation unless `autoHorizontal`.
+CGRect CSCarViewportForWindow(UIWindow *window, UIWindowScene *scene,
+                              CSAppOptions *options, CGSize sourceSize,
+                              BOOL autoHorizontal,
+                              UIEdgeInsets *_Nullable outSafeArea,
+                              BOOL *_Nullable outPortrait);
+
+/// Removes safe-area padding UIKit still reports after the window has been moved
+/// inside the safe rectangle, which would otherwise be applied twice.
+void CSNeutralizeResidualSafeArea(UIWindow *window);
+
 /// Applies the per-app render scale to a freshly connected car scene.
 void CSApplyScaleToCarScene(UIWindowScene *scene, CSAppOptions *options);
 

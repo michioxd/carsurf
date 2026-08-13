@@ -30,8 +30,9 @@ static CGSize gSourceSize;
 static BOOL gVideoActive;
 static BOOL gAutoHorizontalApplied;
 
-/// Positions the actual app window after CarPlay's persistent leading sidebar,
-/// then applies the user's render scale inside that usable rectangle. The app's
+/// Positions the actual app window inside whatever CarPlay's persistent chrome
+/// leaves free — a leading sidebar on a landscape head unit, a bottom bar on a
+/// portrait one — then applies the user's render scale inside that rectangle. The app's
 /// own root controller remains the window root so its menus and presentations
 /// use their normal UIKit hierarchy.
 static UIEdgeInsets CSConfigureTransplantWindow(UIWindow *window,
@@ -40,30 +41,12 @@ static UIEdgeInsets CSConfigureTransplantWindow(UIWindow *window,
                                                   CGSize sourceSize,
                                                   BOOL autoHorizontal,
                                                   BOOL *outPortrait) {
-    CGRect sceneBounds = scene.coordinateSpace.bounds;
-    window.layer.transform = CATransform3DIdentity;
-    window.frame = sceneBounds;
-    [window layoutIfNeeded];
-
-    UIEdgeInsets sceneSafeArea = window.safeAreaInsets;
-    CGRect usableFrame = sceneBounds;
-    usableFrame.origin.x += sceneSafeArea.left;
-    usableFrame.size.width = MAX(1.0, usableFrame.size.width - sceneSafeArea.left);
-
-    // Explicit modes are hard constraints. Only Auto is allowed to switch from
-    // the source window's natural portrait shape to horizontal for video.
-    BOOL portrait = options.layoutMode == CSLayoutModeVertical ||
-                    (options.layoutMode == CSLayoutModeAuto &&
-                     !autoHorizontal && sourceSize.height > sourceSize.width);
-    if (outPortrait) *outPortrait = portrait;
-    if (portrait) {
-        // Keep a conventional vertical-video aspect ratio. The physical CarPlay
-        // screen remains landscape; only the app viewport becomes portrait.
-        CGFloat portraitWidth = MIN(usableFrame.size.width,
-                                    usableFrame.size.height * (9.0 / 16.0));
-        usableFrame.origin.x += (usableFrame.size.width - portraitWidth) * 0.5;
-        usableFrame.size.width = portraitWidth;
-    }
+    // Explicit layout modes are hard constraints. Only Auto is allowed to switch
+    // from the source window's natural portrait shape to horizontal for video.
+    UIEdgeInsets sceneSafeArea = UIEdgeInsetsZero;
+    CGRect usableFrame = CSCarViewportForWindow(window, scene, options, sourceSize,
+                                                autoHorizontal, &sceneSafeArea,
+                                                outPortrait);
 
     CGFloat scale = options.scale > 0.01 ? options.scale : 1.0;
     window.frame = usableFrame;
@@ -73,6 +56,7 @@ static UIEdgeInsets CSConfigureTransplantWindow(UIWindow *window,
     window.layer.position = usableFrame.origin;
     window.layer.transform = CATransform3DMakeScale(scale, scale, 1.0);
     [window layoutIfNeeded];
+    CSNeutralizeResidualSafeArea(window);
     return sceneSafeArea;
 }
 
@@ -263,12 +247,15 @@ static void CSAttemptTransplant(UIWindowScene *scene, CSAppOptions *options,
                                       &portrait);
     UIEdgeInsets contentSafeArea = root.view.safeAreaInsets;
 
-    CSLog("transplanted %s as the window root (%.0fx%.0f at x=%.0f, portrait=%d, scene "
-            "safe l=%.0f r=%.0f, content safe l=%.0f r=%.0f)",
+    CSLog("transplanted %s as the window root (%.0fx%.0f at (%.0f,%.0f), portrait=%d, "
+            "scene safe l=%.0f t=%.0f r=%.0f b=%.0f, "
+            "content safe l=%.0f t=%.0f r=%.0f b=%.0f)",
             object_getClassName(root), car.bounds.size.width, car.bounds.size.height,
-            car.layer.position.x, portrait,
-            sceneSafeArea.left, sceneSafeArea.right,
-            contentSafeArea.left, contentSafeArea.right);
+            car.layer.position.x, car.layer.position.y, portrait,
+            sceneSafeArea.left, sceneSafeArea.top,
+            sceneSafeArea.right, sceneSafeArea.bottom,
+            contentSafeArea.left, contentSafeArea.top,
+            contentSafeArea.right, contentSafeArea.bottom);
 }
 
 void CSStopMirroring(void) {

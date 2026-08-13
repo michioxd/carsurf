@@ -184,6 +184,85 @@ static id cs_configurationForRole(id self, SEL _cmd, NSString *role) {
     return synthetic;
 }
 
+#pragma mark - Viewport
+
+CGRect CSCarViewportForWindow(UIWindow *window, UIWindowScene *scene,
+                              CSAppOptions *options, CGSize sourceSize,
+                              BOOL autoHorizontal, UIEdgeInsets *outSafeArea,
+                              BOOL *outPortrait) {
+    CGRect sceneBounds = scene.coordinateSpace.bounds;
+
+    // Measure against the whole display first: safeAreaInsets only describes the
+    // chrome a window actually overlaps, so a window that has already been shrunk
+    // reports smaller insets and the rectangle would creep inward on every pass.
+    window.layer.transform = CATransform3DIdentity;
+    window.frame = sceneBounds;
+    [window layoutIfNeeded];
+
+    // Inset by every edge, not just the leading one: a landscape head unit puts
+    // CarPlay's chrome in a left sidebar, a portrait unit puts it along the
+    // bottom, and some units add a status strip on top.
+    UIEdgeInsets safeArea = window.safeAreaInsets;
+    CGRect usableFrame = UIEdgeInsetsInsetRect(sceneBounds, safeArea);
+    if (usableFrame.size.width < 1.0 || usableFrame.size.height < 1.0) {
+        // Insets that consume the display are not describing chrome. Trust the
+        // display instead of handing the app a one-point window.
+        CSLog("car scene reported unusable safe area (l=%.0f t=%.0f r=%.0f b=%.0f) "
+                "for a %.0fx%.0f display — using the full display",
+                safeArea.left, safeArea.top, safeArea.right, safeArea.bottom,
+                sceneBounds.size.width, sceneBounds.size.height);
+        safeArea = UIEdgeInsetsZero;
+        usableFrame = sceneBounds;
+    }
+
+    BOOL portrait = options.layoutMode == CSLayoutModeVertical ||
+                    (options.layoutMode == CSLayoutModeAuto && !autoHorizontal &&
+                     sourceSize.height > sourceSize.width);
+
+    // A physically portrait head unit already *is* a vertical viewport, so fill
+    // what the car gave us. Only a landscape display needs a 9:16 column carved
+    // out of it — doing that on a portrait screen wastes both sides.
+    if (portrait && usableFrame.size.width > usableFrame.size.height) {
+        CGFloat portraitWidth = usableFrame.size.height * (9.0 / 16.0);
+        usableFrame.origin.x += (usableFrame.size.width - portraitWidth) * 0.5;
+        usableFrame.size.width = portraitWidth;
+    }
+
+    if (outSafeArea) *outSafeArea = safeArea;
+    if (outPortrait) *outPortrait = portrait;
+    return usableFrame;
+}
+
+void CSNeutralizeResidualSafeArea(UIWindow *window) {
+    UIViewController *root = window.rootViewController;
+    if (!root) return;
+
+    // The window now sits entirely inside the safe rectangle, so anything UIKit
+    // still reports is the same chrome counted twice — it shows up as a status-bar
+    // strip across the top of the app's content and a matching gap at the bottom.
+    // Cancel exactly what is left over, measured rather than assumed, so a head
+    // unit that reports nothing here is left alone.
+    root.additionalSafeAreaInsets = UIEdgeInsetsZero;
+    [window layoutIfNeeded];
+
+    UIEdgeInsets residual = window.safeAreaInsets;
+    if (residual.top < 0.5 && residual.left < 0.5 &&
+        residual.bottom < 0.5 && residual.right < 0.5) {
+        return;
+    }
+
+    root.additionalSafeAreaInsets = UIEdgeInsetsMake(-MAX(0.0, residual.top),
+                                                     -MAX(0.0, residual.left),
+                                                     -MAX(0.0, residual.bottom),
+                                                     -MAX(0.0, residual.right));
+    [window layoutIfNeeded];
+    CSVLog("cancelled doubled safe area l=%.0f t=%.0f r=%.0f b=%.0f (content now "
+             "l=%.0f t=%.0f r=%.0f b=%.0f)",
+             residual.left, residual.top, residual.right, residual.bottom,
+             root.view.safeAreaInsets.left, root.view.safeAreaInsets.top,
+             root.view.safeAreaInsets.right, root.view.safeAreaInsets.bottom);
+}
+
 #pragma mark - Scale
 
 void CSApplyScaleToCarScene(UIWindowScene *scene, CSAppOptions *options) {
@@ -194,23 +273,11 @@ void CSApplyScaleToCarScene(UIWindowScene *scene, CSAppOptions *options) {
         if (sceneBounds.size.width <= 0 || sceneBounds.size.height <= 0) continue;
         CGSize originalSize = window.bounds.size;
 
-        window.layer.transform = CATransform3DIdentity;
-        window.frame = sceneBounds;
-        [window layoutIfNeeded];
-
-        UIEdgeInsets safeArea = window.safeAreaInsets;
-        CGRect visibleFrame = sceneBounds;
-        visibleFrame.origin.x += safeArea.left;
-        visibleFrame.size.width = MAX(1.0, visibleFrame.size.width - safeArea.left);
-        BOOL portrait = options.layoutMode == CSLayoutModeVertical ||
-                        (options.layoutMode == CSLayoutModeAuto &&
-                         originalSize.height > originalSize.width);
-        if (portrait) {
-            CGFloat portraitWidth = MIN(visibleFrame.size.width,
-                                        visibleFrame.size.height * (9.0 / 16.0));
-            visibleFrame.origin.x += (visibleFrame.size.width - portraitWidth) * 0.5;
-            visibleFrame.size.width = portraitWidth;
-        }
+        UIEdgeInsets safeArea = UIEdgeInsetsZero;
+        BOOL portrait = NO;
+        CGRect visibleFrame = CSCarViewportForWindow(window, scene, options,
+                                                     originalSize, NO,
+                                                     &safeArea, &portrait);
 
         // Grow the window's logical size by 1/scale and shrink it visually by
         // scale: the app lays out for a larger canvas, and the result is
@@ -222,9 +289,14 @@ void CSApplyScaleToCarScene(UIWindowScene *scene, CSAppOptions *options) {
         window.layer.position = visibleFrame.origin;
         window.layer.transform = CATransform3DMakeScale(scale, scale, 1.0);
 
-        CSVLog("configured car window to %.0fx%.0f at x=%.0f, %.2fx, portrait=%d",
+        CSVLog("configured car window to %.0fx%.0f at (%.0f,%.0f), %.2fx, portrait=%d, "
+                 "display %.0fx%.0f, safe l=%.0f t=%.0f r=%.0f b=%.0f",
                  window.bounds.size.width, window.bounds.size.height,
-                 window.layer.position.x, scale, portrait);
+                 window.layer.position.x, window.layer.position.y, scale, portrait,
+                 sceneBounds.size.width, sceneBounds.size.height,
+                 safeArea.left, safeArea.top, safeArea.right, safeArea.bottom);
+
+        CSNeutralizeResidualSafeArea(window);
     }
 }
 
