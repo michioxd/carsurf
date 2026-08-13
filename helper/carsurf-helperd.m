@@ -34,6 +34,7 @@
 
 #import <Foundation/Foundation.h>
 #import "CSAppFilter.h"
+#import "CSConfig.h" // CSSceneSource only; the daemon does not link CSConfig.m
 #import "CSLog.h"
 #import "CSPatchLog.h"
 #import "CSPatchState.h"
@@ -218,6 +219,22 @@ static NSString *CSScratchPath(NSString *purpose, NSString *extension) {
                       NSUUID.UUID.UUIDString,
                       extension.length ? [@"." stringByAppendingString:extension] : @""];
     return [kStateDirectory stringByAppendingPathComponent:name];
+}
+
+/// The user's CarPlay Interface choice for one app. Read straight from the
+/// preference plist rather than through CSConfig: the daemon runs as root with
+/// no sandbox to work around, and reconcile is driven by a change to this very
+/// file, so a cached copy could be one edit behind at exactly the wrong moment.
+static CSSceneSource CSSceneSourceForBundle(NSString *bundleID) {
+    NSDictionary *preferences = [NSDictionary dictionaryWithContentsOfFile:kPrefsPath];
+    NSDictionary *apps = preferences[@"apps"];
+    if (![apps isKindOfClass:NSDictionary.class]) return CSSceneSourceAuto;
+    NSDictionary *entry = apps[bundleID];
+    if (![entry isKindOfClass:NSDictionary.class]) return CSSceneSourceAuto;
+
+    NSInteger source = [entry[@"sceneSource"] integerValue];
+    if (source < CSSceneSourceAuto || source > CSSceneSourcePhone) return CSSceneSourceAuto;
+    return (CSSceneSource)source;
 }
 
 static NSString *CSAppVersion(NSString *bundleID) {
@@ -628,17 +645,38 @@ static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason)
         return CSApplyPatchResultFailed;
     }
     if (CSHasNativeCarPlayCapability(entitlements)) {
+        // The binary is never touched on either branch. All that differs is what
+        // CSCarKitPolicy.m is told: NativeBridged forces launchUsingTemplateUI
+        // off so CSApp.m's rewritten window scene is what CarPlay expects, while
+        // Native leaves CarKit's own template admission in charge. The two must
+        // agree with CSApp.m's decision for the same app, or the car display
+        // shows neither UI — hence both read the same preference.
+        CSSceneSource source = CSSceneSourceForBundle(bundleID);
         NSDictionary *info = [NSDictionary dictionaryWithContentsOfFile:infoPath];
-        if (CSInfoHasComplexNativeCarPlayScenes(info)) {
+        BOOL complex = CSInfoHasComplexNativeCarPlayScenes(info);
+
+        if (source == CSSceneSourceNative) {
+            CSLog("%s is set to use its own CarPlay interface — leaving its "
+                  "signature untouched and CarKit's own policy in charge",
+                  bundleID.UTF8String);
+            return CSApplyPatchResultNative;
+        }
+        if (complex && source != CSSceneSourcePhone) {
             CSLog("%s already has native CarPlay capability with multiple "
                   "concurrent scenes — leaving its signature and scenes "
                   "untouched entirely; CarKit admits it on its own",
                   bundleID.UTF8String);
             return CSApplyPatchResultNative;
         }
-        CSLog("%s already has native CarPlay capability (single scene) — "
-              "leaving its signature untouched; CarSurf bridges its scene "
-              "instead of touching the binary", bundleID.UTF8String);
+        if (complex) {
+            CSLog("%s runs multiple concurrent native CarPlay scenes but is set "
+                  "to Phone Screen — signature still untouched; CarSurf bridges "
+                  "its phone scene instead of its template UI", bundleID.UTF8String);
+        } else {
+            CSLog("%s already has native CarPlay capability (single scene) — "
+                  "leaving its signature untouched; CarSurf bridges its scene "
+                  "instead of touching the binary", bundleID.UTF8String);
+        }
         return CSApplyPatchResultNativeBridged; // nothing to patch, and never re-sign this one
     }
     if (CSHasDedicatedSandboxProfile(entitlements)) {

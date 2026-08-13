@@ -85,6 +85,19 @@ BOOL CSHasActiveCarScene(void) { return gActiveCarScenes > 0; }
 
 #pragma mark - Role rewriting
 
+static BOOL gLeavesTemplateScenesAlone = NO;
+
+void CSSetLeavesTemplateScenesAlone(BOOL leaveAlone) {
+    gLeavesTemplateScenesAlone = leaveAlone;
+}
+
+/// A real template scene this process must not rewrite — see
+/// CSSetLeavesTemplateScenesAlone.
+static BOOL CSMustLeaveRoleAlone(NSString *role) {
+    return gLeavesTemplateScenesAlone && [role isKindOfClass:NSString.class] &&
+           [role hasPrefix:CSCarSceneRolePrefix];
+}
+
 static BOOL CSBridgingEnabledForThisApp(void) {
     static BOOL enabled;
     static dispatch_once_t once;
@@ -99,6 +112,12 @@ static id (*orig_initWithNameSessionRole)(id, SEL, NSString *, NSString *);
 
 static id cs_initWithNameSessionRole(id self, SEL _cmd, NSString *name, NSString *role) {
     if (!CSIsCarSceneRole(role) || !CSBridgingEnabledForThisApp()) {
+        return orig_initWithNameSessionRole(self, _cmd, name, role);
+    }
+    if (CSMustLeaveRoleAlone(role)) {
+        CSLog("leaving scene role %s alone: CarPlay built a real template scene "
+                "even though this app is set to Phone Screen — rewriting it here "
+                "is what crashes the app at launch", role.UTF8String);
         return orig_initWithNameSessionRole(self, _cmd, name, role);
     }
 
@@ -127,6 +146,7 @@ static NSString *(*orig_sessionRole)(id, SEL);
 static NSString *cs_sessionRole(id self, SEL _cmd) {
     NSString *role = orig_sessionRole(self, _cmd);
     if (!CSIsCarSceneRole(role) || !CSBridgingEnabledForThisApp()) return role;
+    if (CSMustLeaveRoleAlone(role)) return role;
 
     // Remember this session so the trait and scale code can recognise the car
     // scene later, when its role no longer looks like CarPlay's.

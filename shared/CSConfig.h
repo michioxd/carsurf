@@ -32,6 +32,24 @@ typedef NS_ENUM(NSInteger, CSIdiomMode) {
     CSIdiomModePad = 2,
 };
 
+/// Which interface an app that ships its *own* CarPlay support should put on the
+/// head unit. Only meaningful for an app with real Apple-issued CarPlay
+/// entitlements; an ordinary app has no template UI to choose, and CarSurf
+/// bridges its phone scene either way.
+typedef NS_ENUM(NSInteger, CSSceneSource) {
+    /// CarSurf decides: bridge the phone scene when the app runs a single
+    /// CarPlay scene, leave a multi-scene app (Dashboard and/or Instrument
+    /// Cluster alongside its template scene) on its own CarPlay UI.
+    CSSceneSourceAuto = 0,
+    /// Always leave the app on its own CarPlay template UI.
+    CSSceneSourceNative = 1,
+    /// Always bridge the app's phone scene onto the car display, even when it
+    /// runs several concurrent CarPlay scenes. Rewriting one of several scenes
+    /// the app and UIKit coordinate together is what crashed Waze, so this is
+    /// opt-in per app rather than a default.
+    CSSceneSourcePhone = 2,
+};
+
 /// Per-app options. Values are clamped on read, so a hand-edited plist cannot
 /// produce a scale of 0 or a negative rotation.
 @interface CSAppOptions : NSObject
@@ -48,6 +66,8 @@ typedef NS_ENUM(NSInteger, CSIdiomMode) {
 @property (nonatomic, readonly) CSLayoutMode layoutMode;
 /// Permit the car scene to rotate independently of the device.
 @property (nonatomic, readonly) BOOL allowIndependentRotation;
+/// For an app with its own CarPlay support: its template UI or its phone scene.
+@property (nonatomic, readonly) CSSceneSource sceneSource;
 @end
 
 /// Reads the tweak's configuration. Safe to use from SpringBoard, CarPlay.app,

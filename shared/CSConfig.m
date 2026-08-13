@@ -72,6 +72,12 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
                               : CSLayoutModeHorizontal;
         }
         _allowIndependentRotation = [dict[@"allowIndependentRotation"] boolValue];
+
+        NSInteger sceneSource = [dict[@"sceneSource"] integerValue];
+        _sceneSource = (sceneSource >= CSSceneSourceAuto &&
+                        sceneSource <= CSSceneSourcePhone)
+                           ? (CSSceneSource)sceneSource
+                           : CSSceneSourceAuto;
     }
     return self;
 }

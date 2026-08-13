@@ -192,6 +192,39 @@
             [result addObject:patchLog];
         }
 
+        // Only apps that ship their own CarPlay support have two interfaces to
+        // choose between; for everything else CarSurf has nothing but the phone
+        // scene to show, so the setting is inert rather than hidden — the app
+        // list has no way to know which is which before the daemon has looked.
+        PSSpecifier *interfaceGroup =
+            [PSSpecifier groupSpecifierWithName:@"CarPlay Interface"];
+        [interfaceGroup setProperty:@"For an app that already supports CarPlay, "
+                                    @"choose between the CarPlay interface it "
+                                    @"ships and its ordinary phone screen. Auto "
+                                    @"keeps the app's own interface when it runs "
+                                    @"several CarPlay screens at once (map, "
+                                    @"dashboard, instrument cluster) and bridges "
+                                    @"the phone screen otherwise. Apps without "
+                                    @"CarPlay support of their own always use "
+                                    @"the phone screen."
+                            forKey:@"footerText"];
+        [result addObject:interfaceGroup];
+
+        PSSpecifier *sceneSource =
+            [PSSpecifier preferenceSpecifierNamed:@"Show On Car Display"
+                                            target:self
+                                               set:@selector(setAppValue:specifier:)
+                                               get:@selector(readAppValue:)
+                                            detail:Nil
+                                              cell:PSSegmentCell
+                                              edit:Nil];
+        [sceneSource setProperty:@"sceneSource" forKey:@"carsurfKey"];
+        [sceneSource setProperty:@[ @"Auto", @"Its Own", @"Phone Screen" ]
+                          forKey:@"carsurfItems"];
+        [sceneSource setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
+        [sceneSource setProperty:@(84.0) forKey:@"height"];
+        [result addObject:sceneSource];
+
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
         [group setProperty:@"Choose the viewport and whether the app should build its "
                            @"interface as an iPhone or iPad. Use CarPlay Screen Size "
@@ -289,6 +322,7 @@
     if ([key isEqualToString:@"scale"]) return @(1.0);
     if ([key isEqualToString:@"layoutMode"]) return @(CSLayoutModeHorizontal);
     if ([key isEqualToString:@"idiomMode"]) return @(CSIdiomModePhone);
+    if ([key isEqualToString:@"sceneSource"]) return @(CSSceneSourceAuto);
     return @NO;
 }
 

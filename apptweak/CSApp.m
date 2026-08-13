@@ -143,17 +143,38 @@ static void CSAppInit(void) {
         if (![config isBundleEnabled:bundleID]) return;
 
         BOOL native = CSAppHasNativeCarPlayCapability();
-        if (native && CSAppHasComplexNativeCarPlayScenes()) {
+        CSSceneSource source = [CSConfig.sharedConfig optionsForBundle:bundleID].sceneSource;
+
+        // The choice only exists for an app that ships its own CarPlay UI. For
+        // everything else there is no template UI to fall back to, so asking for
+        // one would just mean the app never appears.
+        if (native && source == CSSceneSourceNative) {
+            CSLog("%s is set to use its own CarPlay interface — installing no "
+                    "bridge hooks", bundleID.UTF8String);
+            return;
+        }
+        if (native && CSAppHasComplexNativeCarPlayScenes() &&
+            source != CSSceneSourcePhone) {
             CSLog("%s runs multiple concurrent native CarPlay scenes (dashboard/"
                     "instrument cluster) — installing no bridge hooks; rewriting "
                     "one of several coordinated scenes crashed Waze this way. "
-                    "Uses its own CarPlay UI instead.", bundleID.UTF8String);
+                    "Uses its own CarPlay UI instead. Set CarPlay Interface to "
+                    "Phone Screen for this app to bridge it anyway.",
+                    bundleID.UTF8String);
             return;
+        }
+        if (!native && source == CSSceneSourceNative) {
+            CSLog("%s has no CarPlay interface of its own — bridging its phone "
+                    "scene despite the Own Interface setting", bundleID.UTF8String);
         }
 
         CSLog("bridging enabled for %s%s", bundleID.UTF8String,
-                native ? " (native, single CarPlay scene — bridged rather than "
-                         "left on its own template UI)" : "");
+                !native ? ""
+                        : (source == CSSceneSourcePhone
+                               ? " (native, phone scene requested — bridged "
+                                 "instead of its own template UI)"
+                               : " (native, single CarPlay scene — bridged rather "
+                                 "than left on its own template UI)"));
         // The per-app Settings page posts this cooperative close request after
         // changing display options. It avoids a whole-device respring and does
         // not require Preferences to hold process-management privileges.
@@ -165,6 +186,12 @@ static void CSAppInit(void) {
             CSLog("close requested from per-app display settings");
             exit(0);
         });
+
+        // A native app in Phone Screen mode should be handed a plain CarPlay
+        // window scene, because CSSceneManifestSpoof.m hides its template roles
+        // from CarPlay. If a template scene turns up regardless, rewriting it is
+        // fatal — leave it to the app.
+        CSSetLeavesTemplateScenesAlone(native && source == CSSceneSourcePhone);
 
         CSInstallSceneBridge();
         CSInstallTraitOverrides();

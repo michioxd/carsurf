@@ -3,6 +3,7 @@
 #import "CSLog.h"
 #import <os/log.h>
 #import <stdarg.h>
+#import <sys/stat.h>
 #import <unistd.h>
 
 // iOS ships no `log` binary, so os_log output is effectively unreadable on a
@@ -62,6 +63,16 @@ static NSString *CSLogFilePath(void) {
             NSString *directory = candidate.stringByDeletingLastPathComponent;
             if (![fileManager fileExistsAtPath:directory]) continue;
             if (access(directory.fileSystemRepresentation, W_OK) != 0) continue;
+            // A writable directory is not enough: carsurf-helperd runs as root
+            // and creates this file 0644 root-owned, after which SpringBoard and
+            // CarPlay.app (mobile) can no longer append to it. fopen just fails
+            // and every line from those processes is lost — which is exactly how
+            // the CarPlay policy and manifest hooks came to leave no trace at
+            // all while helperd filled the same file with thousands of lines.
+            if ([fileManager fileExistsAtPath:candidate] &&
+                access(candidate.fileSystemRepresentation, W_OK) != 0) {
+                continue;
+            }
             path = candidate;
             return;
         }
@@ -84,8 +95,13 @@ static void CSAppendToFile(const char *line) {
 
     dispatch_async(queue, ^{
         NSString *path = CSLogFilePath();
+        BOOL existed = access(path.fileSystemRepresentation, F_OK) == 0;
         FILE *file = fopen(path.fileSystemRepresentation, "a");
         if (!file) return;
+        // Whoever creates the shared log decides who else can use it. root gets
+        // there first (helperd starts at boot), so widen it immediately rather
+        // than lock every mobile process out of the file it just made.
+        if (!existed) chmod(path.fileSystemRepresentation, 0666);
         fputs(entry.UTF8String, file);
         fputc('\n', file);
         fclose(file);

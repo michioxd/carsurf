@@ -19,6 +19,17 @@ BOOL CSIsCarSceneRole(NSString *_Nullable role);
 /// builds a plain, interactive UIWindowScene on the head unit.
 void CSInstallSceneBridge(void);
 
+/// Tells the bridge to leave a real CPTemplateApplication* scene alone.
+///
+/// Set for an app that ships its own CarPlay template UI and was switched to
+/// Phone Screen: CSSceneManifestSpoof.m hides its template roles so CarPlay
+/// hands it a plain CarPlay window scene instead, and a template scene arriving
+/// anyway means that hiding did not take. Rewriting one at that point throws in
+/// +[UIScene _sceneForFBSScene:create:withSession:connectionOptions:] and kills
+/// the app on every launch, so the app keeps its own CarPlay UI for that launch
+/// instead — degraded, not dead.
+void CSSetLeavesTemplateScenesAlone(BOOL leaveAlone);
+
 /// YES once a bridged car scene has connected in this process.
 BOOL CSHasActiveCarScene(void);
 
