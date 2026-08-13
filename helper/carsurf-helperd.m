@@ -593,6 +593,41 @@ static CSApplyPatchResult CSApplyPatch(NSString *bundleID, NSString **outReason)
         return CSApplyPatchResultFailed;
     }
 
+    // Check the tools before using them. Without this a missing one surfaces as
+    // "failed to spawn /var/jb/usr/bin/ldid: No such file or directory" followed
+    // by "cannot read entitlements", and Settings shows only the generic "patch
+    // attempt failed" — which reads as a problem with the app rather than a
+    // missing package. ldid and uikittools are ordinary packages (and are now
+    // declared as Depends), so a user can act on this; jbctl belongs to the
+    // jailbreak itself and is named separately because reinstalling it is a
+    // different job.
+    NSString *missing = nil;
+    if (access(kLdid.fileSystemRepresentation, X_OK) != 0) {
+        missing = @"ldid";
+    } else if (access(kUicache.fileSystemRepresentation, X_OK) != 0) {
+        missing = @"uikittools (uicache)";
+    }
+    if (missing) {
+        CSLog("cannot patch %s: %s is not available", bundleID.UTF8String,
+              missing.UTF8String);
+        if (outReason) {
+            *outReason = [NSString stringWithFormat:
+                @"CarSurf needs the %@ package, which is not installed. Install it "
+                @"from Sileo, then tap Patch Now again.", missing];
+        }
+        return CSApplyPatchResultFailed;
+    }
+    if (access(kJbctl.fileSystemRepresentation, X_OK) != 0) {
+        CSLog("cannot patch %s: %s is not available", bundleID.UTF8String,
+              kJbctl.UTF8String);
+        if (outReason) {
+            *outReason = @"CarSurf could not find jbctl, which the jailbreak "
+                         @"provides. Without it a patched app cannot be trusted "
+                         @"and would not launch, so nothing was changed.";
+        }
+        return CSApplyPatchResultFailed;
+    }
+
     NSDictionary *entitlements = CSReadEntitlements(executablePath);
     if (!entitlements) {
         CSLog("cannot read entitlements for %s", bundleID.UTF8String);

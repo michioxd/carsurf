@@ -1,9 +1,9 @@
 Package: com.pavunato.carsurf
 Name: CarSurf
-Version: 0.1.4
+Version: 0.1.4-1
 Architecture: iphoneos-arm64
 Description: Run any app on your CarPlay display. A CarBridge-equivalent tweak rebuilt for the modern (iOS 15-18) CarPlay pipeline.
-Depends: firmware (>= 15.0), mobilesubstrate, preferenceloader
+Depends: firmware (>= 15.0), mobilesubstrate, preferenceloader, ldid, uikittools
 Recommends: com.opa334.libsandy
 Maintainer: pavunato
 Author: pavunato
