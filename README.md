@@ -93,9 +93,44 @@ identifier, leaves embedded frameworks and their Apple/DRM signatures untouched,
 adds the main executable and existing embedded-framework cdhashes to the jailbreak
 trustcache, and re-registers the app. Trusting those unchanged framework hashes is
 required because dyld will not load a non-platform image into the now-platform
-main process. The script then refreshes each framework inode with an archival copy
-so the kernel re-evaluates the unchanged signature instead of retaining an older
-non-platform classification.
+main process.
+
+The script stops there, which is enough only for an app that has not been launched
+yet this boot. `carsurf-helperd` additionally replaces each embedded framework with
+a byte-identical copy of itself after trusting it, so the file gets a new inode and
+the kernel evaluates it against the new trustcache instead of reusing the
+non-platform code-signature blob it cached the first time the app mapped that
+framework — see *Why a trusted framework still needs a new inode* below.
+
+### Why a trusted framework still needs a new inode
+
+The kernel attaches a code-signature blob to a file's vnode the first time the
+file is mapped and keeps reusing it. Adding a cdhash to the trustcache afterwards
+does not re-classify an image the device has already loaded, so a framework that
+was mapped before its app was patched stays *non-platform* while the re-signed
+main executable is now a platform binary — and dyld refuses to map it:
+
+```
+Library not loaded: @rpath/Flutter.framework/Flutter
+  code signature ... not valid for use in process:
+  mapping process is a platform binary, but mapped file is not
+```
+
+The app is killed at launch, on the phone as much as on CarPlay, and which
+framework is blamed changes between runs depending on what is still cached. The
+main executable escapes it only because `ldid` rewrites the file, which forces a
+fresh evaluation. Replacing each framework with a byte-identical copy does the
+same for the rest: same bytes, same cdhash, new inode.
+
+Copying is safe even though every App Store framework is FairPlay-encrypted
+(`cryptid=1`) and ships its own `SC_Info/*.sinf` sidecar — measured on iOS 18.5,
+the copy decrypts and launches exactly as the original did. An earlier build
+refused to touch anything carrying FairPlay metadata, which excluded every
+framework in every App Store app and left the bug unfixed.
+
+Each refresh is recorded per-cdhash in
+`/var/jb/Library/CarSurf/framework-trust.plist`, so reconciling repeatedly does
+not re-copy frameworks that are already trusted with the bytes they have now.
 
 The `.deb` lands in `packages/`. It contains:
 

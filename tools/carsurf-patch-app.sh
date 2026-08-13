@@ -397,7 +397,11 @@ done <<< "$verified_framework_listing"
 
 if [[ ${CS_TEST_PHONE_LAUNCH:-0} == 1 ]]; then
     echo "Testing a normal phone launch before keeping the patch..."
-    remote_exec "/usr/bin/uiopen --bundleid $(shell_quote "$bundle_id")
+    # Rootless installs put uiopen under /var/jb; /usr/bin/uiopen does not exist
+    # there, and a failure to launch it reads as "the patch broke the app" and
+    # rolls back a patch that was fine.
+    remote_exec "uiopen=\$(command -v uiopen 2>/dev/null || echo /var/jb/usr/bin/uiopen)
+\"\$uiopen\" --bundleid $(shell_quote "$bundle_id")
 sleep 5
 if ! launchctl print user/501 2>/dev/null | grep -F $(shell_quote "UIKitApplication:$bundle_id[") | grep -Eq '^[[:space:]]*[1-9][0-9]*[[:space:]]'; then
     echo 'The patched app did not remain running after launch.' >&2

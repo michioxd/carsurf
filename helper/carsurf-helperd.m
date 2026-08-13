@@ -231,33 +231,48 @@ static NSString *CSAppVersion(NSString *bundleID) {
 
 #pragma mark - Signing
 
-/// Adds a newly-signed executable to the jailbreak's trustcache. RootHide's
-/// jbctl expects a Mach-O path; older Dopamine jbctl builds expect a cdhash.
-/// Try the path API first, then retain the cdhash form strictly as a fallback.
-static BOOL CSTrustExecutable(NSString *executablePath) {
-    if (CSRun(@[ kJbctl, @"trustcache", @"add", executablePath ], nil) == 0) {
-        return YES;
-    }
-
-    CSLog("path-based trustcache add failed for %s; trying legacy cdhash API",
-          executablePath.UTF8String);
+/// The cdhash ldid reports for a Mach-O image, or nil if it cannot read one.
+static NSString *CSCDHashForImage(NSString *imagePath) {
     NSString *dump = CSScratchPath(@"cdhash", @"txt");
-    if (CSRun(@[ kLdid, @"-h", executablePath ], dump) != 0) {
+    if (CSRun(@[ kLdid, @"-h", imagePath ], dump) != 0) {
         [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
-        return NO;
+        return nil;
     }
 
     NSString *text = [NSString stringWithContentsOfFile:dump
                                               encoding:NSUTF8StringEncoding error:NULL];
-    NSString *hash = nil;
-    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
-        if ([line hasPrefix:@"CDHash="]) {
-            hash = [line substringFromIndex:@"CDHash=".length];
-            break;
-        }
-    }
     [NSFileManager.defaultManager removeItemAtPath:dump error:NULL];
 
+    for (NSString *line in [text componentsSeparatedByString:@"\n"]) {
+        if ([line hasPrefix:@"CDHash="]) {
+            NSString *hash = [line substringFromIndex:@"CDHash=".length];
+            if (hash.length) return hash;
+        }
+    }
+    return nil;
+}
+
+/// Adds a newly-signed executable to the jailbreak's trustcache. RootHide's
+/// jbctl expects a Mach-O path; older Dopamine jbctl builds expect a cdhash.
+/// Try the path API first, then retain the cdhash form strictly as a fallback.
+///
+/// Once the path form has been refused, stop offering it: a jbctl that only
+/// implements the cdhash form refuses it for every image, and re-probing costs a
+/// subprocess plus an `ERROR: passed cdhash has wrong length` line per embedded
+/// framework in the patch log the user is meant to be able to read.
+static BOOL CSTrustExecutable(NSString *executablePath) {
+    static BOOL pathFormUnsupported = NO;
+
+    if (!pathFormUnsupported) {
+        if (CSRun(@[ kJbctl, @"trustcache", @"add", executablePath ], nil) == 0) {
+            return YES;
+        }
+        pathFormUnsupported = YES;
+        CSLog("this jbctl does not accept a Mach-O path; using the cdhash form for "
+              "every image from here on");
+    }
+
+    NSString *hash = CSCDHashForImage(executablePath);
     if (hash.length == 0) {
         CSLog("could not read a cdhash for %s", executablePath.UTF8String);
         return NO;
@@ -274,6 +289,94 @@ static BOOL CSSignWithEntitlements(NSString *executablePath, NSString *entitleme
         return NO;
     }
     return CSTrustExecutable(executablePath);
+}
+
+#pragma mark - Framework trust
+
+/// The kernel attaches a code-signature blob to a file's vnode the first time it
+/// is mapped and keeps reusing it. Adding a cdhash to the trustcache afterwards
+/// therefore does not re-classify an image the device has already loaded once —
+/// it stays non-platform until the vnode goes away, which for a framework inside
+/// a running app means a reboot. Replacing the file with a byte-identical copy
+/// gives it a new inode, so the next mapping is evaluated fresh and finds the
+/// trustcache entry. Recorded per-cdhash in the ledger below so a reconcile that
+/// changes nothing does not re-copy every framework in every enabled app.
+static NSString *const kFrameworkLedgerPath =
+    @"/var/jb/Library/CarSurf/framework-trust.plist";
+
+static NSMutableDictionary<NSString *, NSString *> *CSLoadFrameworkLedger(void) {
+    NSMutableDictionary *ledger =
+        [[NSDictionary dictionaryWithContentsOfFile:kFrameworkLedgerPath] mutableCopy];
+    return ledger ?: [NSMutableDictionary new];
+}
+
+static void CSSaveFrameworkLedger(NSMutableDictionary<NSString *, NSString *> *ledger) {
+    // App reinstalls land in a new container UUID, so stale paths accumulate.
+    NSFileManager *fileManager = NSFileManager.defaultManager;
+    for (NSString *path in ledger.allKeys) {
+        if (![fileManager fileExistsAtPath:path]) [ledger removeObjectForKey:path];
+    }
+    [ledger writeToFile:kFrameworkLedgerPath atomically:YES];
+}
+
+/// Swaps `imagePath` for a byte-identical copy of itself so it gets a fresh
+/// inode. `expectedHash` is the cdhash the caller just trusted; the copy is only
+/// swapped in once ldid agrees it still hashes to that, so a short or corrupt
+/// copy can never replace a working framework.
+///
+/// An earlier build refused to do this to any image with FairPlay metadata, on
+/// the theory that DRM binds to the file's identity. That rule excluded every
+/// framework in an App Store app — all of them ship encrypted (cryptid=1) with
+/// their own SC_Info/*.sinf sidecar — so nothing was ever refreshed and patched
+/// apps kept dying in dyld. Measured on iOS 18.5 with Vietmap's
+/// Flutter.framework (encrypted, full SC_Info): new inode, identical cdhash, app
+/// launches and stays up. The bytes are what decryption needs, not the inode.
+static BOOL CSRefreshImageInode(NSString *imagePath, NSString *expectedHash) {
+    NSFileManager *fileManager = NSFileManager.defaultManager;
+    NSDictionary *attributes = [fileManager attributesOfItemAtPath:imagePath error:NULL];
+    if (!attributes) {
+        CSLog("could not read attributes of %s", imagePath.UTF8String);
+        return NO;
+    }
+
+    NSString *temporary = [imagePath.stringByDeletingLastPathComponent
+        stringByAppendingPathComponent:[NSString stringWithFormat:@".carsurf-trusted-%@",
+                                        NSUUID.UUID.UUIDString]];
+    NSError *error = nil;
+    if (![fileManager copyItemAtPath:imagePath toPath:temporary error:&error]) {
+        CSLog("could not stage a fresh copy of %s: %s", imagePath.UTF8String,
+              error.localizedDescription.UTF8String);
+        [fileManager removeItemAtPath:temporary error:NULL];
+        return NO;
+    }
+
+    // The bundle's files belong to _installd; a copy made by root that keeps root
+    // ownership is one dyld may refuse to map.
+    [fileManager setAttributes:@{
+        NSFileOwnerAccountID : attributes[NSFileOwnerAccountID] ?: @(0),
+        NSFileGroupOwnerAccountID : attributes[NSFileGroupOwnerAccountID] ?: @(0),
+        NSFilePosixPermissions : attributes[NSFilePosixPermissions] ?: @(0755),
+    } ofItemAtPath:temporary error:NULL];
+
+    NSString *copyHash = CSCDHashForImage(temporary);
+    if (expectedHash.length && ![copyHash isEqualToString:expectedHash]) {
+        CSLog("refusing to swap in a copy of %s: cdhash %s does not match %s",
+              imagePath.UTF8String, copyHash.UTF8String ?: "(unreadable)",
+              expectedHash.UTF8String);
+        [fileManager removeItemAtPath:temporary error:NULL];
+        return NO;
+    }
+
+    // rename() rather than remove-then-move: it is atomic, so an interrupted
+    // refresh can never leave the app without the framework, and a copy mapped
+    // into an already-running process keeps its own inode alive.
+    if (rename(temporary.fileSystemRepresentation, imagePath.fileSystemRepresentation) != 0) {
+        CSLog("could not swap in the refreshed copy of %s (errno %d: %s)",
+              imagePath.UTF8String, errno, strerror(errno));
+        [fileManager removeItemAtPath:temporary error:NULL];
+        return NO;
+    }
+    return YES;
 }
 
 /// A trustcache entry makes the re-signed main executable a *platform* process.
@@ -294,7 +397,8 @@ static BOOL CSTrustFrameworks(NSString *bundlePath) {
     }
 
     NSArray<NSString *> *entries = [fileManager contentsOfDirectoryAtPath:frameworksPath error:NULL];
-    NSUInteger trusted = 0;
+    NSMutableDictionary<NSString *, NSString *> *ledger = CSLoadFrameworkLedger();
+    NSUInteger trusted = 0, refreshed = 0;
     BOOL succeeded = YES;
     for (NSString *entry in entries) {
         NSString *itemPath = [frameworksPath stringByAppendingPathComponent:entry];
@@ -319,14 +423,25 @@ static BOOL CSTrustFrameworks(NSString *bundlePath) {
         }
         trusted++;
 
-        // Do not replace the framework's inode after trusting it. Frameworks
-        // carrying FairPlay SC_Info metadata (YouTube's Widevine is one) can
-        // bind DRM integrity to the original file identity and crash at launch
-        // if it is copied/deleted/moved, even when its bytes are unchanged. A
-        // successful RootHide/Dopamine trustcache add is sufficient; the app
-        // must be relaunched normally to pick it up.
+        // The trustcache entry alone does not re-classify an image the kernel
+        // has already mapped once — see kFrameworkLedgerPath above. Give it a
+        // new inode so the next launch evaluates it fresh.
+        NSString *hash = CSCDHashForImage(binaryPath);
+        if (hash.length && [ledger[binaryPath] isEqualToString:hash]) continue;
+
+        if (!CSRefreshImageInode(binaryPath, hash)) {
+            // Reporting success here would hand back an app that dyld kills on
+            // every launch, which is exactly the failure this whole function
+            // exists to prevent.
+            succeeded = NO;
+            continue;
+        }
+        refreshed++;
+        if (hash.length) ledger[binaryPath] = hash;
     }
-    CSLog("trusted %lu embedded framework/dylib image(s)", (unsigned long)trusted);
+    CSSaveFrameworkLedger(ledger);
+    CSLog("trusted %lu embedded framework/dylib image(s), %lu of them refreshed",
+          (unsigned long)trusted, (unsigned long)refreshed);
     return succeeded;
 }
 
