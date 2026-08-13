@@ -80,3 +80,39 @@ BOOL CSAppIsUserVisible(id applicationProxy, NSString **outReason) {
     if (outReason) *outReason = reason;
     return visible;
 }
+
+/// The full set CarKit's admission gate recognises — see
+/// +[CRCarPlayAppDeclaration requiredEntitlementKeys]. Kept next to the check
+/// itself so helperd (reading a binary's entitlements), CSApp.m (asking SecTask
+/// about its own process) and this (asking LaunchServices about someone else's
+/// app) cannot drift apart about what "already a CarPlay app" means.
+static NSArray<NSString *> *CSNativeCarPlayEntitlementKeys(void) {
+    static NSArray *keys;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableArray *mutable = [NSMutableArray arrayWithObjects:
+            @"CARCapableApp", @"com.apple.developer.playable-content", nil];
+        NSArray *suffixes = @[ @"parking", @"communication", @"audio", @"public-safety",
+                               @"charging", @"driving-task", @"maps", @"protocols",
+                               @"messaging", @"calling", @"quick-ordering", @"fueling" ];
+        for (NSString *suffix in suffixes) {
+            [mutable addObject:[@"com.apple.developer.carplay-" stringByAppendingString:suffix]];
+        }
+        keys = mutable;
+    });
+    return keys;
+}
+
+BOOL CSAppProxyHasNativeCarPlay(id applicationProxy) {
+    SEL sel = sel_getUid("entitlementValueForKey:ofClass:");
+    if (![applicationProxy respondsToSelector:sel]) return NO;
+
+    for (NSString *key in CSNativeCarPlayEntitlementKeys()) {
+        id value = ((id (*)(id, SEL, NSString *, Class))objc_msgSend)(
+            applicationProxy, sel, key, NSNumber.class);
+        if ([value respondsToSelector:@selector(boolValue)] && [value boolValue]) {
+            return YES;
+        }
+    }
+    return NO;
+}

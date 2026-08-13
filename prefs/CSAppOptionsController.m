@@ -1,10 +1,14 @@
 #import "CSAppOptionsController.h"
+#import "CSAppFilter.h"
 #import "CSPrefsStore.h"
 #import "CSConfig.h"
 #import "CSLayoutSegmentCell.h"
+#import "CSScaleSliderCell.h"
 #import "CSPatchLogController.h"
 #import "CSPatchState.h"
 #import <notify.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
 
 @implementation CSAppOptionsController {
     NSArray<PSSpecifier *> *_carsurfSpecifiers;
@@ -53,6 +57,29 @@
 
 - (BOOL)carsurfIsEnabled {
     return [CSPrefsStore.sharedStore isAppEnabled:self.bundleIdentifier];
+}
+
+/// YES for an app that already ships its own CarPlay support. Its binary is
+/// never touched — carsurf-helperd records it native-bridged and CarSurf bridges
+/// its phone screen — so this screen must not offer to patch it.
+- (BOOL)carsurfAppIsNativeCarPlay {
+    static NSMutableDictionary<NSString *, NSNumber *> *cache;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ cache = [NSMutableDictionary new]; });
+
+    NSString *bundleID = self.bundleIdentifier;
+    if (bundleID.length == 0) return NO;
+    NSNumber *cached = cache[bundleID];
+    if (cached) return cached.boolValue;
+
+    Class proxyClass = objc_getClass("LSApplicationProxy");
+    id proxy = proxyClass
+        ? ((id (*)(Class, SEL, NSString *))objc_msgSend)(
+              proxyClass, sel_getUid("applicationProxyForIdentifier:"), bundleID)
+        : nil;
+    BOOL native = proxy ? CSAppProxyHasNativeCarPlay(proxy) : NO;
+    cache[bundleID] = @(native);
+    return native;
 }
 
 - (id)readEnabled:(PSSpecifier *)specifier {
@@ -136,7 +163,10 @@
         // The one thing this whole screen exists to do: everything below is
         // detail for an app that's already on.
         PSSpecifier *enableGroup = [PSSpecifier groupSpecifierWithName:nil];
-        [enableGroup setProperty:CSUsesRuntimeCarPlayAdmission()
+        // "see status below" is only true where the section below actually
+        // exists — an app that keeps its original signature has no status to see.
+        BOOL untouched = CSUsesRuntimeCarPlayAdmission() || self.carsurfAppIsNativeCarPlay;
+        [enableGroup setProperty:untouched
                                      ? @"Puts this app on the CarPlay dashboard. "
                                        @"Nothing on disk is modified — the app keeps "
                                        @"its original signature."
@@ -159,8 +189,11 @@
         // The whole qualification section only means something where the app has
         // to be patched on disk. Before iOS 18 admission happens at runtime and
         // the bundle is never touched, so a status line, a "Patch Now" button and
-        // a patch log would all describe work that never runs.
-        if (!CSUsesRuntimeCarPlayAdmission()) {
+        // a patch log would all describe work that never runs. Same for an app
+        // that already ships CarPlay support on any release: its binary is never
+        // touched either — carsurf-helperd refuses to re-sign one, which is what
+        // protects it — so the section would only ever say "nothing to do".
+        if (!CSUsesRuntimeCarPlayAdmission() && !self.carsurfAppIsNativeCarPlay) {
             // Patching is manual for now: nothing on-device notices an app update
             // by itself, so if YouTube (or any enabled app) drops off CarPlay
             // after updating, this is where the user comes to fix it.
@@ -192,14 +225,15 @@
         }
 
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
-        [group setProperty:@"Choose the viewport and whether the app should build "
-                           @"its interface as an iPhone or iPad. The viewport is "
-                           @"measured from the head unit itself."
+        [group setProperty:@"Orientation picks the shape of the viewport on the "
+                           @"head unit; Layout is the interface the app builds "
+                           @"for it. Scale below 1.0 fits more of the app on "
+                           @"screen, above 1.0 makes controls easier to hit."
                    forKey:@"footerText"];
         [result addObject:group];
 
         PSSpecifier *layout =
-            [PSSpecifier preferenceSpecifierNamed:@"Layout"
+            [PSSpecifier preferenceSpecifierNamed:@"Orientation"
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -212,7 +246,7 @@
         [result addObject:layout];
 
         PSSpecifier *idiom =
-            [PSSpecifier preferenceSpecifierNamed:@"Interface Idiom"
+            [PSSpecifier preferenceSpecifierNamed:@"Layout"
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -226,7 +260,7 @@
         [result addObject:idiom];
 
         PSSpecifier *scale =
-            [PSSpecifier preferenceSpecifierNamed:@"Render Scale"
+            [PSSpecifier preferenceSpecifierNamed:@"Scale"
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -237,8 +271,8 @@
         [scale setProperty:@(0.5) forKey:@"min"];
         [scale setProperty:@(2.0) forKey:@"max"];
         [scale setProperty:@(1.0) forKey:@"default"];
-        [scale setProperty:@YES forKey:@"showValue"];
-        [scale setProperty:@YES forKey:@"isContinuous"];
+        [scale setProperty:CSScaleSliderCell.class forKey:@"cellClass"];
+        [scale setProperty:@(84.0) forKey:@"height"];
         [result addObject:scale];
 
         PSSpecifier *applyGroup =

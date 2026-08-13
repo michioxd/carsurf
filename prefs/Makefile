@@ -7,6 +7,7 @@ CSPrefs_FILES += CSAppListController.m
 CSPrefs_FILES += CSAppOptionsController.m
 CSPrefs_FILES += CSPatchLogController.m
 CSPrefs_FILES += CSLayoutSegmentCell.m
+CSPrefs_FILES += CSScaleSliderCell.m
 CSPrefs_FILES += CSPrefsStore.m
 CSPrefs_FILES += ../shared/CSLog.m
 CSPrefs_FILES += ../shared/CSAppFilter.m

@@ -20,6 +20,20 @@ extern "C" {
 /// diagnostic tool.
 BOOL CSAppIsUserVisible(id applicationProxy, NSString *_Nullable *_Nullable outReason);
 
+/// YES if `applicationProxy` (an LSApplicationProxy) already carries real,
+/// Apple-issued CarPlay entitlements — CARCapableApp, playable-content, or any
+/// com.apple.developer.carplay-*.
+///
+/// carsurf-helperd never re-signs one of these (doing so destroys the signature
+/// those entitlements are validated against), so anything the UI says about
+/// patching is wrong for them. Deliberately does not count SBStarkCapable: that
+/// is the entitlement CarSurf itself grants, and treating it as "native" would
+/// make an app look untouchable the moment it had been patched.
+///
+/// Answers from LaunchServices rather than the binary, so it works from a
+/// sandboxed process that cannot read the app bundle.
+BOOL CSAppProxyHasNativeCarPlay(id applicationProxy);
+
 #ifdef __cplusplus
 }
 #endif

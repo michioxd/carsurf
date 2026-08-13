@@ -11,15 +11,30 @@ pipeline, not a port.
 
 ## What it does
 
-- Any app you pick appears on the CarPlay dashboard.
-- Launching it gives the app a real, interactive `UIWindowScene` on the car
-  display — touch, gestures, keyboard, video, and modal presentation all work,
-  because the app is running an ordinary second window scene and does not know the
-  display is a car.
-- The phone screen keeps its own independent UI for apps that support multiple
-  scenes. Apps that do not (no `UIApplicationSceneManifest`) have their UI
-  transplanted to the car screen and restored when you unplug.
-- Per-app render scale, layout, and idiom reporting.
+- **Any app you pick appears on the CarPlay dashboard** and gets a real,
+  interactive `UIWindowScene` on the car display. Touch, gestures, keyboard,
+  video and modal presentation all work, because the app is running an ordinary
+  second window scene and does not know the display is a car.
+- **Apps that already support CarPlay show their real interface**, not the
+  cut-down template UI Apple's CarPlay SDK allows them. Vietmap, YouTube Music
+  and Zalo all put their full phone app on the head unit instead of a template
+  list or a Siri prompt — see *How an app gets qualified*.
+- **The phone keeps its own screen.** Apps that support multiple scenes run both
+  at once; apps that do not (no `UIApplicationSceneManifest`) have their UI
+  transplanted to the car and restored when you unplug.
+- **Per-app Orientation, Layout and Scale**, over global defaults: fill the
+  landscape area or use a centered 9:16 column, build the UI as an iPhone or
+  iPad, and scale it between 0.5× and 2× to fit more on screen or make controls
+  easier to hit while driving.
+- **Nothing to do by hand.** A root daemon qualifies each app you enable, and
+  re-checks after App Store updates silently strip what it added. No SSH, no
+  re-running a script.
+- **Refuses to break your apps.** An app carrying real Apple-issued CarPlay
+  entitlements is never re-signed, and a system app with its own sandbox profile
+  is refused outright — both are unrecoverable without reinstalling.
+
+Measured working on iOS 18.5 (iPhone 11, rootless) and iOS 16.7.12 (iPhone X,
+RootHide).
 
 ## How an app gets qualified
 

@@ -3,6 +3,7 @@
 #import "CSPrefsStore.h"
 #import "CSConfig.h"
 #import "CSLayoutSegmentCell.h"
+#import "CSScaleSliderCell.h"
 #import "CSLog.h"
 #import "CSPatchLogController.h"
 #import <objc/message.h>
@@ -74,12 +75,14 @@
 
     // --- Display defaults --------------------------------------------------
     PSSpecifier *displayGroup = [PSSpecifier groupSpecifierWithName:@"Display"];
-    [displayGroup setProperty:@"Render scale below 1.0 fits more of the app on screen; "
-                              @"above 1.0 makes controls easier to hit while driving."
+    [displayGroup setProperty:@"Defaults for every enabled app; each app can "
+                              @"override them. Scale below 1.0 fits more of the "
+                              @"app on screen, above 1.0 makes controls easier to "
+                              @"hit while driving."
                        forKey:@"footerText"];
     [specifiers addObject:displayGroup];
 
-    PSSpecifier *scale = [PSSpecifier preferenceSpecifierNamed:@"Render Scale"
+    PSSpecifier *scale = [PSSpecifier preferenceSpecifierNamed:@"Scale"
                                                        target:self
                                                           set:@selector(setValue:specifier:)
                                                           get:@selector(readValue:)
@@ -91,13 +94,13 @@
     [scale setProperty:@(0.5) forKey:@"min"];
     [scale setProperty:@(2.0) forKey:@"max"];
     [scale setProperty:@(1.0) forKey:@"default"];
-    [scale setProperty:@YES forKey:@"showValue"];
-    [scale setProperty:@YES forKey:@"isContinuous"];
-    [specifiers addObject:scale];
-
+    [scale setProperty:CSScaleSliderCell.class forKey:@"cellClass"];
+    [scale setProperty:@(84.0) forKey:@"height"];
     [specifiers addObject:[self layoutModeSpecifierForScope:@"defaults"]];
 
     [specifiers addObject:[self idiomModeSpecifierForScope:@"defaults"]];
+
+    [specifiers addObject:scale];
 
     // --- Diagnostics -------------------------------------------------------
     PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:@"Diagnostics"];
@@ -163,7 +166,7 @@
 
 - (PSSpecifier *)layoutModeSpecifierForScope:(NSString *)scope {
     PSSpecifier *specifier =
-        [PSSpecifier preferenceSpecifierNamed:@"Layout"
+        [PSSpecifier preferenceSpecifierNamed:@"Orientation"
                                         target:self
                                            set:@selector(setValue:specifier:)
                                            get:@selector(readValue:)
@@ -179,7 +182,7 @@
 
 - (PSSpecifier *)idiomModeSpecifierForScope:(NSString *)scope {
     PSSpecifier *specifier =
-        [PSSpecifier preferenceSpecifierNamed:@"Interface Idiom"
+        [PSSpecifier preferenceSpecifierNamed:@"Layout"
                                         target:self
                                            set:@selector(setValue:specifier:)
                                            get:@selector(readValue:)
