@@ -45,19 +45,26 @@ static void CSWriteRelay(void) {
                                              attributes:@{ NSFilePosixPermissions : @(0755) }
                                                   error:&directoryError];
 
-    // Write-then-rename so a reader never observes a half-written file.
-    NSString *temporary = [kRelayPath stringByAppendingPathExtension:@"tmp"];
+    // Write-then-rename so a reader never observes a half-written file. The
+    // temporary name is unique per write and the swap is rename(2): a fixed
+    // ".tmp" name plus remove-then-move raced both against this process (a burst
+    // of preference notifications runs several of these at once) and against
+    // carsurf-helperd, which writes the same file. Every loser of that race
+    // logged "relay rename failed" and left the relay a write behind — invisible
+    // until SpringBoard could write to the shared log at all. rename() replaces
+    // the destination atomically, so there is no window to lose.
+    NSString *temporary = [NSString stringWithFormat:@"%@.%@.tmp", kRelayPath,
+                           NSUUID.UUID.UUIDString];
     if (![data writeToFile:temporary atomically:NO]) {
         CSLog("relay write to %s failed", temporary.UTF8String);
         return;
     }
     chmod(temporary.fileSystemRepresentation, 0644);
 
-    NSFileManager *fileManager = NSFileManager.defaultManager;
-    [fileManager removeItemAtPath:kRelayPath error:NULL];
-    if (![fileManager moveItemAtPath:temporary toPath:kRelayPath error:&error]) {
-        CSLog("relay rename failed: %s", error.localizedDescription.UTF8String);
-        [fileManager removeItemAtPath:temporary error:NULL];
+    if (rename(temporary.fileSystemRepresentation,
+               kRelayPath.fileSystemRepresentation) != 0) {
+        CSLog("relay rename failed (errno %d: %s)", errno, strerror(errno));
+        [NSFileManager.defaultManager removeItemAtPath:temporary error:NULL];
         return;
     }
 

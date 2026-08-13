@@ -140,13 +140,6 @@ void CSPatchStateRecordSuccess(NSString *bundleIdentifier, NSString *appVersion)
     CSPatchStateSetEntry(bundleIdentifier, entry);
 }
 
-void CSPatchStateRecordNative(NSString *bundleIdentifier, NSString *appVersion) {
-    NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-        @"native", @"status", [NSDate date], @"updatedAt", nil];
-    if (appVersion.length) entry[@"appVersion"] = appVersion;
-    CSPatchStateSetEntry(bundleIdentifier, entry);
-}
-
 void CSPatchStateRecordNativeBridged(NSString *bundleIdentifier, NSString *appVersion) {
     NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObjectsAndKeys:
         @"native-bridged", @"status", [NSDate date], @"updatedAt", nil];

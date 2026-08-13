@@ -43,21 +43,19 @@ typedef NS_ENUM(NSInteger, CSPatchStatus) {
     CSPatchStatusPatched,
     /// The most recent patch attempt failed; see -failureReason.
     CSPatchStatusFailed,
-    /// The app already ships with real, Apple-issued CarPlay entitlements
-    /// (CARCapableApp / com.apple.developer.carplay-* / playable-content), and
-    /// runs more than one CarPlay-family scene concurrently (a Dashboard
-    /// and/or Instrument Cluster scene alongside its main template scene, e.g.
-    /// Waze). carsurf-helperd never touches its binary, and CSApp.m installs
-    /// no bridge hooks — rewriting one of several scenes UIKit and the app
-    /// coordinate together is what crashed Waze; see CSApp.m for the full
-    /// story. CSCarKitPolicy.m must NOT force launchUsingTemplateUI off for
-    /// one of these: nothing bridges its scene, so CarKit's own template
-    /// admission has to stay in charge or the result is a blank screen.
+    /// No longer written: CarSurf used to leave an app that runs several
+    /// concurrent CarPlay scenes (Waze) on its own template UI, and this said
+    /// so. Every enabled app is bridged now, so the daemon records
+    /// CSPatchStatusNativeBridged for those too. Still read, because a state
+    /// file written by an older build can carry it, and CSCarKitPolicy.m must
+    /// keep leaving CarKit's own admission alone for one — nothing bridges
+    /// that app's scene until the daemon next reconciles it.
     CSPatchStatusNative,
-    /// Also has real Apple-issued CarPlay entitlements, but only the one plain
-    /// CarPlay scene role (e.g. YouTube Music) — safe to bridge the same way
-    /// as a patched app, just without ever touching its binary. CSApp.m
-    /// installs the scene bridge for these, and CSCarKitPolicy.m forces
+    /// Has real Apple-issued CarPlay entitlements, so its binary is never
+    /// touched, but CarSurf bridges its phone scene onto the car display all
+    /// the same. CSApp.m installs the scene bridge, CSSceneManifestSpoof.m
+    /// hides the app's template entitlements and scene roles from CarPlay so
+    /// no template scene is built, and CSCarKitPolicy.m forces
     /// launchUsingTemplateUI off exactly as it would for CSPatchStatusPatched.
     CSPatchStatusNativeBridged,
 };
@@ -97,7 +95,6 @@ NSArray<NSString *> *CSPatchStateAllPatchedIdentifiers(void);
 // --- Writer side: carsurf-helperd only (runs as root). ------------------------
 
 void CSPatchStateRecordSuccess(NSString *bundleIdentifier, NSString *_Nullable appVersion);
-void CSPatchStateRecordNative(NSString *bundleIdentifier, NSString *_Nullable appVersion);
 void CSPatchStateRecordNativeBridged(NSString *bundleIdentifier, NSString *_Nullable appVersion);
 void CSPatchStateRecordFailure(NSString *bundleIdentifier, NSString *_Nullable reason);
 void CSPatchStateRemove(NSString *bundleIdentifier);

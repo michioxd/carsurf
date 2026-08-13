@@ -5,18 +5,16 @@
 #import "CSPrivate.h"
 #import "CSRuntime.h"
 
-// Gate G3. Two independent problems:
+// Gate G3. Apps that switch on traitCollection.userInterfaceIdiom see
+// UIUserInterfaceIdiomCarPlay and either fall through to a default branch with
+// no layout or refuse to build a UI at all. Reporting Phone keeps them on the
+// code path they were written for.
 //
-//  1. Apps that switch on traitCollection.userInterfaceIdiom see
-//     UIUserInterfaceIdiomCarPlay and either fall through to a default branch
-//     with no layout or refuse to build a UI at all. Reporting Phone keeps them
-//     on the code path they were written for.
-//
-//  2. Apps that lay out against +[UIScreen mainScreen].bounds instead of their
-//     scene's coordinate space render at phone size on a much wider display.
-//     Pointing mainScreen at the car screen fixes those — at the cost of the
-//     phone-side UI laying out wrongly while bridged, which is why it is off by
-//     default and opt-in per app.
+// This used to also point +[UIScreen mainScreen] at the car screen, for apps
+// that lay out against mainScreen.bounds rather than their scene's coordinate
+// space. That was an opt-in per-app switch, and it is gone: the viewport is
+// measured from the head unit's own scene now (CSCarViewportForWindow), so the
+// override bought nothing but a phone-side UI laying out wrongly while bridged.
 
 static CSAppOptions *CSOptionsForThisApp(void) {
     static CSAppOptions *options;
@@ -66,32 +64,6 @@ static UIUserInterfaceIdiom cs_deviceUserInterfaceIdiom(id self, SEL _cmd) {
     return forced;
 }
 
-#pragma mark - Main screen
-
-/// Supplied directly by the scene lifecycle callback. Looking it up by asking
-/// UIApplication for connectedScenes from inside +[UIScreen mainScreen] can
-/// re-enter UIKit while it holds its scene-activation lock, stalling launch until
-/// the watchdog kills the app.
-static __weak UIScreen *gActiveCarScreen;
-
-void CSSetActiveCarScreen(UIScreen *screen) {
-    gActiveCarScreen = screen;
-    CSVLog("active car screen %s", screen ? "cached" : "cleared");
-}
-
-static UIScreen *CSCarScreen(void) {
-    return gActiveCarScreen;
-}
-
-static UIScreen *(*orig_mainScreen)(Class, SEL);
-
-static UIScreen *cs_mainScreen(Class self, SEL _cmd) {
-    if (!CSOptionsForThisApp().spoofMainScreen) return orig_mainScreen(self, _cmd);
-
-    UIScreen *car = CSCarScreen();
-    return car ?: orig_mainScreen(self, _cmd);
-}
-
 #pragma mark - Install
 
 void CSInstallTraitOverrides(void) {
@@ -110,13 +82,6 @@ void CSInstallTraitOverrides(void) {
                                                (IMP *)&orig_deviceUserInterfaceIdiom);
     }
 
-    BOOL screen = NO;
-    if (options.spoofMainScreen) {
-        screen = CSSwizzleClassMethod(UIScreen.class, @selector(mainScreen),
-                                        (IMP)cs_mainScreen, (IMP *)&orig_mainScreen);
-    }
-
-    CSLog("trait overrides installed (traitIdiom=%d deviceIdiom=%d mode=%ld, "
-            "mainScreen=%d)", traitIdiom, deviceIdiom,
-            (long)options.idiomMode, screen);
+    CSLog("trait overrides installed (traitIdiom=%d deviceIdiom=%d mode=%ld)",
+            traitIdiom, deviceIdiom, (long)options.idiomMode);
 }

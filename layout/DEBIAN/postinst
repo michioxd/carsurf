@@ -13,6 +13,17 @@ for ROOT in /var/jb /; do
     break
 done
 
+# The shared log. Not every device has this directory — a 16.7.12 RootHide
+# install did not — and without it SpringBoard and CarPlay.app quietly log into
+# their own temporary directory instead, which is how the entire CarPlay half of
+# the tweak came to leave no trace anywhere. Create it, and hand the log itself
+# to mobile: carsurf-helperd runs as root and would otherwise create it 0644
+# root-owned and lock those processes out.
+LOGDIR=/var/mobile/Library/Logs
+mkdir -p "$LOGDIR"
+chown mobile:mobile "$LOGDIR" 2>/dev/null || true
+[ -f "$LOGDIR/carsurf.log" ] && chmod 666 "$LOGDIR/carsurf.log" 2>/dev/null || true
+
 # The root helper grants the CarPlay entitlement when an app is enabled in Settings;
 # neither the tweak nor Settings can do that themselves.
 PLIST=/var/jb/Library/LaunchDaemons/com.pavunato.carsurf.helperd.plist

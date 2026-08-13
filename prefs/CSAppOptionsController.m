@@ -99,15 +99,14 @@
                     @"then, tap Patch Now to re-check it.", when, version];
         }
         case CSPatchStatusNative:
-            return [NSString stringWithFormat:@"This app already has real CarPlay support "
-                    @"built in, running more than one CarPlay scene at once — checked %@. "
-                    @"Nothing to patch, and its scene isn't bridged either; it uses its own "
-                    @"CarPlay interface entirely.", when];
+            return [NSString stringWithFormat:@"This app has real CarPlay support built in "
+                    @"and was left on its own CarPlay interface by an older version of "
+                    @"CarSurf — checked %@. Tap Patch Now to have it show its phone "
+                    @"interface instead.", when];
         case CSPatchStatusNativeBridged:
             return [NSString stringWithFormat:@"This app has real CarPlay support built in — "
-                    @"checked %@. Its binary was never touched, but its CarPlay scene is "
-                    @"bridged to show its full phone interface instead of Apple's template UI.",
-                    when];
+                    @"checked %@. Its binary was never touched, but the car display shows "
+                    @"its full phone interface instead of Apple's template UI.", when];
         case CSPatchStatusFailed:
             return [NSString stringWithFormat:@"Last patch attempt failed at %@: %@", when,
                     record.failureReason ?: @"see device log."];
@@ -192,43 +191,10 @@
             [result addObject:patchLog];
         }
 
-        // Only apps that ship their own CarPlay support have two interfaces to
-        // choose between; for everything else CarSurf has nothing but the phone
-        // scene to show, so the setting is inert rather than hidden — the app
-        // list has no way to know which is which before the daemon has looked.
-        PSSpecifier *interfaceGroup =
-            [PSSpecifier groupSpecifierWithName:@"CarPlay Interface"];
-        [interfaceGroup setProperty:@"For an app that already supports CarPlay, "
-                                    @"choose between the CarPlay interface it "
-                                    @"ships and its ordinary phone screen. Auto "
-                                    @"keeps the app's own interface when it runs "
-                                    @"several CarPlay screens at once (map, "
-                                    @"dashboard, instrument cluster) and bridges "
-                                    @"the phone screen otherwise. Apps without "
-                                    @"CarPlay support of their own always use "
-                                    @"the phone screen."
-                            forKey:@"footerText"];
-        [result addObject:interfaceGroup];
-
-        PSSpecifier *sceneSource =
-            [PSSpecifier preferenceSpecifierNamed:@"Show On Car Display"
-                                            target:self
-                                               set:@selector(setAppValue:specifier:)
-                                               get:@selector(readAppValue:)
-                                            detail:Nil
-                                              cell:PSSegmentCell
-                                              edit:Nil];
-        [sceneSource setProperty:@"sceneSource" forKey:@"carsurfKey"];
-        [sceneSource setProperty:@[ @"Auto", @"Its Own", @"Phone Screen" ]
-                          forKey:@"carsurfItems"];
-        [sceneSource setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
-        [sceneSource setProperty:@(84.0) forKey:@"height"];
-        [result addObject:sceneSource];
-
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
-        [group setProperty:@"Choose the viewport and whether the app should build its "
-                           @"interface as an iPhone or iPad. Use CarPlay Screen Size "
-                           @"makes apps read the head-unit dimensions."
+        [group setProperty:@"Choose the viewport and whether the app should build "
+                           @"its interface as an iPhone or iPad. The viewport is "
+                           @"measured from the head unit itself."
                    forKey:@"footerText"];
         [result addObject:group];
 
@@ -258,17 +224,6 @@
         [idiom setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
         [idiom setProperty:@(84.0) forKey:@"height"];
         [result addObject:idiom];
-
-        PSSpecifier *carScreen =
-            [PSSpecifier preferenceSpecifierNamed:@"Use CarPlay Screen Size"
-                                            target:self
-                                               set:@selector(setAppValue:specifier:)
-                                               get:@selector(readAppValue:)
-                                            detail:Nil
-                                              cell:PSSwitchCell
-                                              edit:Nil];
-        [carScreen setProperty:@"spoofMainScreen" forKey:@"carsurfKey"];
-        [result addObject:carScreen];
 
         PSSpecifier *scale =
             [PSSpecifier preferenceSpecifierNamed:@"Render Scale"
@@ -322,7 +277,6 @@
     if ([key isEqualToString:@"scale"]) return @(1.0);
     if ([key isEqualToString:@"layoutMode"]) return @(CSLayoutModeHorizontal);
     if ([key isEqualToString:@"idiomMode"]) return @(CSIdiomModePhone);
-    if ([key isEqualToString:@"sceneSource"]) return @(CSSceneSourceAuto);
     return @NO;
 }
 

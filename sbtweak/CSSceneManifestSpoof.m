@@ -86,76 +86,6 @@ static BOOL CSIsTemplateCapabilityKey(NSString *key) {
             [key isEqualToString:@"com.apple.developer.playable-content"]);
 }
 
-/// YES if this manifest declares more than the one plain CarPlay template scene
-/// — a Dashboard and/or Instrument Cluster scene beside it (Vietmap, Waze).
-/// Mirrors CSApp.m's CSAppHasComplexNativeCarPlayScenes and helperd's
-/// CSInfoHasComplexNativeCarPlayScenes; all three have to agree about an app.
-static BOOL CSManifestHasComplexCarPlayScenes(NSDictionary *manifest) {
-    if (![manifest isKindOfClass:NSDictionary.class]) return NO;
-
-    if ([manifest[@"CPSupportsDashboardNavigationScene"] boolValue]) return YES;
-    if ([manifest[@"CPSupportsInstrumentClusterNavigationScene"] boolValue]) return YES;
-
-    NSDictionary *configurations = manifest[kSceneConfigurationsKey];
-    if (![configurations isKindOfClass:NSDictionary.class]) return NO;
-    for (NSString *role in configurations) {
-        if ([role isKindOfClass:NSString.class] &&
-            [role hasPrefix:@"CPTemplateApplication"] &&
-            ![role isEqualToString:@"CPTemplateApplicationSceneSessionRoleApplication"]) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-/// YES when this app should show its phone screen on the car display rather than
-/// the CarPlay interface it ships — which is what CarSurf does for every enabled
-/// app except a multi-scene native one left on Auto.
-///
-/// Phone Screen says so outright. Auto means it too for a *single-scene* native
-/// app: CSApp.m bridges those (YouTube Music is the standing example) and
-/// helperd records them native-bridged, so leaving their template entitlement
-/// answering here contradicts the rest of the tweak — on iOS 16, where there is
-/// no CarKit policy hook to force launchUsingTemplateUI off, that entitlement is
-/// the whole decision and CarPlay drives the app with its Now Playing template
-/// instead of the bridged scene.
-static BOOL CSShouldShowPhoneScene(NSString *bundleID, NSDictionary *manifest) {
-    if (bundleID.length == 0) return NO;
-    switch ([CSConfig.sharedConfig optionsForBundle:bundleID].sceneSource) {
-        case CSSceneSourcePhone:  return YES;
-        case CSSceneSourceNative: return NO;
-        case CSSceneSourceAuto:   break;
-    }
-    return !CSManifestHasComplexCarPlayScenes(manifest);
-}
-
-static id (*orig_objectForInfoDictionaryKey)(id, SEL, NSString *, Class); // installed below
-
-/// The app's real scene manifest, read through the *unhooked* getter so our own
-/// spoof does not answer, and cached per bundle — the entitlement getters run
-/// constantly, while this only changes when the app is updated.
-static NSDictionary *CSRealSceneManifest(id proxy, NSString *bundleID) {
-    static NSMutableDictionary *cache;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{ cache = [NSMutableDictionary new]; });
-
-    @synchronized (cache) {
-        id cached = cache[bundleID];
-        if (cached) return cached == NSNull.null ? nil : cached;
-    }
-
-    id manifest = nil;
-    SEL sel = sel_getUid("objectForInfoDictionaryKey:ofClass:");
-    if (orig_objectForInfoDictionaryKey && [proxy respondsToSelector:sel]) {
-        manifest = orig_objectForInfoDictionaryKey(proxy, sel, kSceneManifestKey,
-                                                   NSDictionary.class);
-    }
-    if (![manifest isKindOfClass:NSDictionary.class]) manifest = nil;
-
-    @synchronized (cache) { cache[bundleID] = manifest ?: (id)NSNull.null; }
-    return manifest;
-}
-
 /// Answers "this app has no template capability" for an app whose phone screen
 /// CarSurf is putting on the car display.
 ///
@@ -164,16 +94,11 @@ static NSDictionary *CSRealSceneManifest(id proxy, NSString *bundleID) {
 /// manifest is only consulted afterwards. Measured on Vietmap — with the roles
 /// hidden but the entitlements still answering, CarPlay still built a
 /// CPTemplateApplicationSceneSessionRoleApplication scene. Masking is confined
-/// to a bundle the user enabled and is having bridged; every other app, and
-/// every other key, keeps its real answer.
+/// to a bundle the user enabled; every other app, and every other key, keeps its
+/// real answer.
 static BOOL CSShouldMaskTemplateCapability(id proxy, NSString *key, NSString **outBundleID) {
     if (!CSIsTemplateCapabilityKey(key)) return NO;
-
-    NSString *bundleID = nil;
-    if (!CSShouldSpoofProxy(proxy, &bundleID)) return NO;
-    if (!CSShouldShowPhoneScene(bundleID, CSRealSceneManifest(proxy, bundleID))) return NO;
-
-    if (outBundleID) *outBundleID = bundleID;
+    if (!CSShouldSpoofProxy(proxy, outBundleID)) return NO;
     return YES;
 }
 
@@ -189,8 +114,9 @@ static void CSLogMaskedCapabilityOnce(NSString *bundleID, NSString *key) {
         if ([seen containsObject:identity]) return;
         [seen addObject:identity];
     }
-    CSLog("hiding %s from %s: phone screen requested, so CarPlay must not treat "
-          "it as a template app", key.UTF8String, bundleID.UTF8String);
+    CSLog("hiding %s from %s: CarSurf puts its phone screen on the car display, "
+          "so CarPlay must not treat it as a template app",
+          key.UTF8String, bundleID.UTF8String);
 }
 
 #pragma mark - Entitlement value getters (the admission gate)
@@ -469,7 +395,8 @@ static id cs_entitlementValuesForKeys(id self, SEL _cmd, NSArray *keys) {
         // not a dictionary. Hand back the real object untouched and tag it — the
         // accessors above answer capability keys for tagged objects, which is the
         // only safe way to influence a type whose interface we do not own.
-        BOOL phoneScene = CSShouldShowPhoneScene(bundleID, CSRealSceneManifest(self, bundleID));
+        // Every enabled app shows its phone screen on the car display.
+        BOOL phoneScene = YES;
         if (![result isKindOfClass:NSDictionary.class]) {
             CSTagCachedValues(result);
             if (phoneScene) CSTagPhoneSceneCachedValues(result);
@@ -542,7 +469,7 @@ static NSMutableDictionary *CSConfigurationsWithoutTemplateRoles(NSDictionary *c
 /// roles are dropped as well; see CSConfigurationsWithoutTemplateRoles.
 static NSDictionary *CSManifestWithCarPlayRole(id manifest, NSString *bundleID) {
     NSDictionary *original = [manifest isKindOfClass:NSDictionary.class] ? manifest : nil;
-    BOOL phoneScene = CSShouldShowPhoneScene(bundleID, original);
+    BOOL phoneScene = YES; // every enabled app; see CSShouldMaskTemplateCapability
 
     NSDictionary *existing = original[kSceneConfigurationsKey];
     if (!phoneScene && [existing isKindOfClass:NSDictionary.class] && existing[kCarPlayRoleKey]) {
@@ -590,6 +517,8 @@ static NSDictionary *CSManifestWithCarPlayRole(id manifest, NSString *bundleID) 
     CSVLog("advertising %s as a CarPlay window-scene app", bundleID.UTF8String);
     return result;
 }
+
+static id (*orig_objectForInfoDictionaryKey)(id, SEL, NSString *, Class);
 
 static id cs_objectForInfoDictionaryKey(id self, SEL _cmd, NSString *key, Class expected) {
     id value = orig_objectForInfoDictionaryKey(self, _cmd, key, expected);

@@ -99,11 +99,6 @@
 
     [specifiers addObject:[self idiomModeSpecifierForScope:@"defaults"]];
 
-    PSSpecifier *mainScreen = [self switchNamed:@"Use CarPlay Screen Size"
-                                            key:@"spoofMainScreen"
-                                          scope:@"defaults"];
-    [specifiers addObject:mainScreen];
-
     // --- Diagnostics -------------------------------------------------------
     PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:@"Diagnostics"];
     [diagnosticsGroup setProperty:@"Open Live Patch Log to clear old output, "

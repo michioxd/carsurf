@@ -116,8 +116,8 @@ static id cs_initWithNameSessionRole(id self, SEL _cmd, NSString *name, NSString
     }
     if (CSMustLeaveRoleAlone(role)) {
         CSLog("leaving scene role %s alone: CarPlay built a real template scene "
-                "even though this app is set to Phone Screen — rewriting it here "
-                "is what crashes the app at launch", role.UTF8String);
+                "for this app anyway — rewriting it here is what crashes it at "
+                "launch", role.UTF8String);
         return orig_initWithNameSessionRole(self, _cmd, name, role);
     }
 
@@ -343,7 +343,6 @@ static void CSCarSceneConnected(UIScene *scene) {
     }
 
     UIWindowScene *windowScene = (UIWindowScene *)scene;
-    CSSetActiveCarScreen(windowScene.screen);
     if (mode == CSBridgeModeMirror) {
         CSStartMirroringIntoScene(windowScene, options);
     } else {
@@ -355,7 +354,6 @@ static void CSCarSceneConnected(UIScene *scene) {
 
 static void CSCarSceneDisconnected(UIScene *scene) {
     if (gActiveCarScenes > 0) gActiveCarScenes--;
-    if (gActiveCarScenes == 0) CSSetActiveCarScreen(nil);
     CSLog("car scene disconnected");
     CSStopMirroring();
 }

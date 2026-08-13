@@ -19,7 +19,7 @@ pipeline, not a port.
 - The phone screen keeps its own independent UI for apps that support multiple
   scenes. Apps that do not (no `UIApplicationSceneManifest`) have their UI
   transplanted to the car screen and restored when you unplug.
-- Per-app render scale, idiom reporting, and main-screen redirection.
+- Per-app render scale, layout, and idiom reporting.
 
 ## How an app gets qualified
 
@@ -29,13 +29,12 @@ their live on-disk state every time preferences change, at boot, and on a
 manual **Patch Now** tap, and always re-verifies rather than trusting its own
 past outcome (an App Store update silently re-signs a bundle and strips
 whatever the daemon added, with no notification). Every attempt lands in one
-of four outcomes, visible per-app in Settings:
+of three outcomes, visible per-app in Settings:
 
 | Outcome | What happened | CarPlay behavior |
 |---|---|---|
 | **Patched** | Re-signed with `SBStarkCapable`, trustcache-added | Gets a real `UIWindowScene`, its own phone UI |
-| **Native** | Already has real Apple-issued CarPlay entitlements *and* runs more than one CarPlay-family scene (Dashboard/Instrument Cluster) — left untouched entirely | Apple's own CarPlay template UI, unmodified |
-| **Native (bridged)** | Already has real CarPlay entitlements but only one scene — binary left untouched, but its scene is bridged the same way a patched app's is | Real `UIWindowScene`, its own phone UI |
+| **Native (bridged)** | Already has real Apple-issued CarPlay entitlements — binary left untouched, and CarPlay is told the app has no template capability so it is bridged the same way a patched app is | Real `UIWindowScene`, its own phone UI |
 | **Failed** | Refused, or a genuine attempt failed | Stays off the dashboard; reason shown in Settings |
 
 An app already carrying real `com.apple.developer.carplay-*` entitlements is
@@ -52,10 +51,17 @@ in the top-level `Makefile`; set to `0` to bring the section back — the
 daemon's own refusal for a dedicated-sandbox-profile app still applies
 either way, this only controls whether the picker offers one at all).
 
-Multi-scene CarPlay apps (Waze: main template + Dashboard + Instrument
-Cluster, all running concurrently) are also never bridged — rewriting one of
-several scenes UIKit and the app coordinate together crashed it outright.
-Only a native app with exactly one CarPlay scene gets bridged.
+An app that ships its own CarPlay interface is bridged too — that interface is
+usually a cut-down version of the app, and putting the real one on the head unit
+is the whole point of the tweak. What makes it work is that CarPlay is never
+allowed to build a template scene for it: `CSSceneManifestSpoof.m` answers its
+`com.apple.developer.carplay-*` entitlements as absent and hides its
+`CPTemplateApplication*` scene roles, so CarPlay hands it a plain CarPlay window
+scene. Rewriting a template scene *after* CarPlay has built one throws inside
+`+[UIScene _sceneForFBSScene:create:withSession:connectionOptions:]` and kills
+the app on every launch — that is what crashed Waze, and Vietmap after it, on
+both iOS 16.7.12 and 18.5. The bridge now declines that rewrite and lets the app
+keep its own UI for that launch instead of dying.
 
 In Settings: **CarSurf → Apps → *pick an app*** — the same screen carries the
 enable switch, qualification status, layout options, and a manual re-check
@@ -235,8 +241,7 @@ never to undefined behaviour.
 |--------|---------|-------------------|
 | Render Scale | 1.0 | Below 1.0 fits more UI on screen; above 1.0 enlarges controls. |
 | Layout | Horizontal | Choose Auto, Horizontal, or a centered 9:16 Vertical viewport; available globally and per enabled app. |
-| Report iPhone Idiom | on | Leave on. Apps that switch on `traitCollection.userInterfaceIdiom` see `.carPlay` otherwise and often render nothing. |
-| Redirect Main Screen | off | Turn on for apps that lay out against `UIScreen.mainScreen.bounds` instead of their scene. It fixes those apps and mis-lays-out the phone-side UI while bridged, which is why it is opt-in. |
+| Interface Idiom | iPhone | Leave on iPhone. Apps that switch on `traitCollection.userInterfaceIdiom` see `.carPlay` otherwise and often render nothing. |
 
 ## Known limits
 

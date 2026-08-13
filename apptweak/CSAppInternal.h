@@ -21,10 +21,10 @@ void CSInstallSceneBridge(void);
 
 /// Tells the bridge to leave a real CPTemplateApplication* scene alone.
 ///
-/// Set for an app that ships its own CarPlay template UI and was switched to
-/// Phone Screen: CSSceneManifestSpoof.m hides its template roles so CarPlay
-/// hands it a plain CarPlay window scene instead, and a template scene arriving
-/// anyway means that hiding did not take. Rewriting one at that point throws in
+/// Set for an app that ships its own CarPlay template UI: CSSceneManifestSpoof.m
+/// hides its template entitlements and scene roles so CarPlay hands it a plain
+/// CarPlay window scene instead, and a template scene arriving anyway means that
+/// hiding did not take. Rewriting one at that point throws in
 /// +[UIScene _sceneForFBSScene:create:withSession:connectionOptions:] and kills
 /// the app on every launch, so the app keeps its own CarPlay UI for that launch
 /// instead — degraded, not dead.
@@ -38,14 +38,8 @@ BOOL CSIsBridgedCarScene(UIScene *_Nullable scene);
 
 #pragma mark - Gate G3: make the app lay out for the head unit
 
-/// Reports UIUserInterfaceIdiomPhone in place of ...IdiomCarPlay, and optionally
-/// points +[UIScreen mainScreen] at the car screen.
+/// Reports UIUserInterfaceIdiomPhone in place of ...IdiomCarPlay.
 void CSInstallTraitOverrides(void);
-
-/// Updates the screen returned by the optional +[UIScreen mainScreen] override.
-/// SceneBridge supplies this directly from the activated UIWindowScene so the
-/// hook never has to enumerate UIApplication.connectedScenes recursively.
-void CSSetActiveCarScreen(UIScreen *_Nullable screen);
 
 /// The rectangle a bridged app should occupy on the head unit: the display minus
 /// whatever CarPlay's own chrome covers, as reported by the scene rather than

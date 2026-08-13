@@ -58,7 +58,6 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
         } else {
             _idiomMode = CSIdiomModePhone;
         }
-        _spoofMainScreen = [dict[@"spoofMainScreen"] boolValue];
         if (dict[@"layoutMode"]) {
             NSInteger layoutMode = [dict[@"layoutMode"] integerValue];
             _layoutMode = (layoutMode >= CSLayoutModeAuto &&
@@ -72,12 +71,6 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
                               : CSLayoutModeHorizontal;
         }
         _allowIndependentRotation = [dict[@"allowIndependentRotation"] boolValue];
-
-        NSInteger sceneSource = [dict[@"sceneSource"] integerValue];
-        _sceneSource = (sceneSource >= CSSceneSourceAuto &&
-                        sceneSource <= CSSceneSourcePhone)
-                           ? (CSSceneSource)sceneSource
-                           : CSSceneSourceAuto;
     }
     return self;
 }
