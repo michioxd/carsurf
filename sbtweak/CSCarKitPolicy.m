@@ -48,6 +48,40 @@
 // it. Confirmed the hard way on YouTube Music. Leave CarKit's own policy
 // alone for these; it already admits them correctly on its own.
 
+/// Defined with the runtime-admission hooks below; the policy hooks are declared
+/// first because CarKit installs them in that order.
+static BOOL CSIsRuntimeAdmitted(NSString *bundleID);
+
+/// Where runtime admission may install.
+///
+/// Both SpringBoard and CarPlay.app build their own declarations — CarPlay.app
+/// is the one whose policy decisions reach the dashboard, so admitting only in
+/// SpringBoard produces a declaration nobody asks about, which is exactly what
+/// happened first time round.
+///
+/// carkitd is excluded by name and must stay that way: it negotiates the CarPlay
+/// link, and an earlier build that hooked a hot CoreServices accessor there put
+/// the head unit into an endless "connecting" retry loop. The hook installed
+/// here is a single low-frequency CarKit class method, not a hot path, but the
+/// daemon gets nothing regardless.
+static BOOL CSMayInstallRuntimeAdmission(void) {
+    NSString *process = NSProcessInfo.processInfo.processName;
+    return [process isEqualToString:@"SpringBoard"] ||
+           [process isEqualToString:@"CarPlay"] ||
+           [process isEqualToString:@"CarPlayTemplateUIHost"] ||
+           [process isEqualToString:@"carkitd"];
+}
+
+/// carkitd is observed, never altered. SpringBoard admits FPT Play on every
+/// enumeration and the dashboard still does not list it, while CarPlay.app never
+/// calls the factory at all (0 calls against SpringBoard's 70) — so something
+/// else owns the list the dashboard uses, and carkitd is the remaining
+/// candidate. Confirming that before changing a return value there is worth one
+/// respring: a hot-path hook in this daemon already cost a CarPlay link tonight.
+static BOOL CSRuntimeAdmissionIsObserveOnly(void) {
+    return [NSProcessInfo.processInfo.processName isEqualToString:@"carkitd"];
+}
+
 static NSString *CSDeclarationBundleIdentifier(id declaration) {
     SEL sel = @selector(bundleIdentifier);
     if (![declaration respondsToSelector:sel]) return nil;
@@ -99,10 +133,11 @@ static id cs_effectivePolicyForAppDeclaration(id self, SEL _cmd, id declaration)
     CSVLog("policy request for %s", bundleID.UTF8String);
     if (![config isBundleEnabled:bundleID]) return policy;
 
-    if (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID)) {
+    if (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
+        CSIsRuntimeAdmitted(bundleID)) {
         // Same requirement either way: CSApp.m is bridging this app's scene —
-        // re-signed or not — so CarKit needs to be told not to expect a
-        // template delegate. See CSPatchStatusNativeBridged.
+        // re-signed, runtime-admitted, or not — so CarKit needs to be told not
+        // to expect a template delegate. See CSPatchStatusNativeBridged.
         CSPromotePolicy(policy, bundleID);
     } else if (CSPatchStateIsNative(bundleID)) {
         // Leave CarKit's own policy untouched. It already admits this app and
@@ -134,7 +169,8 @@ static id cs_effectivePolicyInVehicle(id self, SEL _cmd, id declaration, id cert
 
     CSVLog("in-vehicle policy request for %s", bundleID.UTF8String);
     if ([config isBundleEnabled:bundleID] &&
-        (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID))) {
+        (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
+         CSIsRuntimeAdmitted(bundleID))) {
         CSPromotePolicy(policy, bundleID);
     }
 
@@ -170,6 +206,232 @@ static void cs_setBundleIdentifier(id self, SEL _cmd, NSString *bundleID) {
     }
 }
 
+#pragma mark - Runtime admission (gate G0)
+
+// Qualifying an app without touching its bundle.
+//
+// The on-disk patch grants SBStarkCapable by re-signing the binary, which
+// invalidates Apple's signature and therefore needs a trustcache entry to stay
+// launchable. That entry is what makes the app a platform binary, and a platform
+// binary cannot register a mach exception port — so every app carrying an
+// in-process crash reporter is SIGKILLed on launch (EXC_GUARD /
+// SET_EXCEPTION_BEHAVIOR). Measured on FPT Play: even its *untouched*
+// Apple-signed binary dies the moment its cdhash is trusted.
+//
+// CSSystem.m used to assert that runtime admission is impossible on iOS 18
+// because entitlements are read at app-registration time. That was measured
+// against LSBundleProxy accessors, which is not the path CarKit uses. A probe
+// showed CarKit building every declaration inside SpringBoard, which CSSystem is
+// injected into:
+//
+//   +[CRCarPlayAppDeclaration declarationForBundleIdentifier:info:entitlements:]
+//     -> declaration for an app holding one of +requiredEntitlementKeys
+//     -> nil for everything else            (492 calls, 66 admitted, on 18.5)
+//
+// So the gate is reachable, and answering it is enough: the entitlements
+// argument is an LSBundleInfoCachedValues, and CarKit asks it for each required
+// key. Rather than synthesise a declaration — which would mean guessing at
+// fields CarKit populates itself — the original factory is re-run with a
+// stand-in for that one argument, so CarKit builds a declaration it is entirely
+// happy with.
+//
+// The stand-in is a proxy, NOT a swizzle. An earlier version of this file hooked
+// -[LSBundleInfoCachedValues objectForKey:] and friends, which put an extra
+// frame on a hot CoreServices path inside carkitd — the daemon that negotiates
+// the CarPlay link — and the head unit dropped into an endless "connecting"
+// retry loop. That is the same trap CSSceneManifestSpoof.m documents for
+// LSBundleProxy. Nothing here patches a system class: the substitution exists
+// only on the argument we ourselves pass to the retry, so no other caller in any
+// process can reach it.
+
+static NSString *const kCSRuntimeAdmissionKey = @"SBStarkCapable";
+
+/// Forwards every message to the real entitlements object except a lookup of the
+/// one key that decides CarPlay admission. NSProxy rather than a subclass so
+/// that -isKindOfClass:, -respondsToSelector: and any CarKit type check are
+/// answered by the genuine object.
+@interface CSAdmittingEntitlements : NSProxy
+@property (nonatomic, strong) id target;
+@end
+
+@implementation CSAdmittingEntitlements
+
+- (instancetype)initWithTarget:(id)target {
+    _target = target;
+    return self;
+}
+
+- (BOOL)cs_isAdmissionKey:(id)key {
+    return [key isKindOfClass:NSString.class] && [key isEqualToString:kCSRuntimeAdmissionKey];
+}
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
+    return [_target methodSignatureForSelector:sel];
+}
+
+// LSBundleInfoCachedValues vends six different objectForKey: shapes
+// (-ofClass:, -ofType:, -checkingKeyClass:checkingValueClass:, …) and CarKit
+// picks one of them. Overriding them individually means guessing right, and
+// guessing wrong is silent — the message forwards to the real object and the
+// app is simply not admitted. Intercepting here covers every shape regardless
+// of arity, because they all take the key first and return an object.
+- (void)forwardInvocation:(NSInvocation *)invocation {
+    const char *name = sel_getName(invocation.selector);
+
+    // Census: which selectors does CarKit actually send the entitlements object?
+    // Answering the wrong one is silent — the message forwards and the app is
+    // simply not admitted — so this records each distinct selector once.
+    static NSMutableSet *seen;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ seen = [NSMutableSet new]; });
+    NSString *selectorName = @(name);
+    @synchronized(seen) {
+        if (![seen containsObject:selectorName]) {
+            [seen addObject:selectorName];
+            CSLog("stand-in received -%s", name);
+        }
+    }
+
+    // Measured: CarKit asks -boolForKey: and -objectForKey:ofClass:. The two
+    // differ in return type — a raw BOOL and an object — so the return value has
+    // to match the signature the caller expects, exactly as
+    // CSSceneManifestSpoof.m warns.
+    BOOL isObjectLookup = strncmp(name, "objectForKey:", strlen("objectForKey:")) == 0;
+    BOOL isBoolLookup = strcmp(name, "boolForKey:") == 0;
+
+    if (isObjectLookup || isBoolLookup) {
+        __unsafe_unretained id key = nil;
+        [invocation getArgument:&key atIndex:2];
+        if ([self cs_isAdmissionKey:key]) {
+            CSLog("admission key answered via -%s", name);
+            if (isBoolLookup) {
+                BOOL affirmative = YES;
+                [invocation setReturnValue:&affirmative];
+            } else {
+                id affirmative = @YES;
+                [invocation setReturnValue:&affirmative];
+            }
+            return;
+        }
+    }
+    [invocation invokeWithTarget:_target];
+}
+
+@end
+
+/// Bundles admitted at runtime this boot. The policy hook promotes these exactly
+/// as it promotes a patched bundle — from CarKit's point of view they are
+/// indistinguishable, and CSApp.m bridges both the same way.
+static NSMutableSet<NSString *> *CSRuntimeAdmittedBundles(void) {
+    static NSMutableSet *set;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ set = [NSMutableSet new]; });
+    return set;
+}
+
+static BOOL CSIsRuntimeAdmitted(NSString *bundleID) {
+    if (!bundleID) return NO;
+    @synchronized(CSRuntimeAdmittedBundles()) {
+        return [CSRuntimeAdmittedBundles() containsObject:bundleID];
+    }
+}
+
+static void CSRecordRuntimeAdmission(NSString *bundleID) {
+    @synchronized(CSRuntimeAdmittedBundles()) {
+        [CSRuntimeAdmittedBundles() addObject:bundleID];
+    }
+}
+
+// --- The gate ------------------------------------------------------------------
+
+static BOOL CSShouldAdmitAtRuntime(NSString *bundleID) {
+    if (bundleID.length == 0) return NO;
+
+    CSConfig *config = CSConfig.sharedConfig;
+    if (CSSpoofSuppressed() || !config.isEnabled) return NO;
+    if (![config isBundleEnabled:bundleID]) return NO;
+
+    // A natively-capable app already has its own declaration and its own
+    // template delegate; admitting it again would be a no-op at best. Only
+    // reachable when CarKit returned nil, but cheap insurance.
+    if (CSPatchStateIsNative(bundleID)) return NO;
+
+    return YES;
+}
+
+static id (*orig_declarationForBundleInfoEnts)(Class, SEL, id, id, id);
+static id cs_declarationForBundleInfoEnts(Class self, SEL _cmd, id bundleID, id info,
+                                          id entitlements) {
+    id result = orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info, entitlements);
+
+    // One line per process, so "no admissions" can be told apart from "the
+    // enumeration ran before this hook was installed" — the two look identical
+    // in the log otherwise, and they need opposite fixes.
+    static BOOL sawFirstCall = NO;
+    if (!sawFirstCall) {
+        sawFirstCall = YES;
+        CSLog("declaration factory reached (first call: %s -> %s)",
+              [bundleID description].UTF8String, result ? "declaration" : "nil");
+    }
+
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+
+    // Bounded to the user's allowlist — a handful of apps, not the ~490 the
+    // enumeration walks — so this stays readable while the path is being
+    // brought up.
+    if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
+        CSLog("enumerated enabled bundle %s -> %s", identifier.UTF8String,
+              result ? "declaration" : "nil");
+    }
+
+    if (CSRuntimeAdmissionIsObserveOnly()) return result;
+
+    if (result) return result;
+    if (!CSShouldAdmitAtRuntime(identifier)) {
+        if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
+            CSLog("not admitting %s (suppressed=%d globalEnabled=%d native=%d)",
+                  identifier.UTF8String, CSSpoofSuppressed(),
+                  CSConfig.sharedConfig.isEnabled, CSPatchStateIsNative(identifier));
+        }
+        return result;
+    }
+
+    CSAdmittingEntitlements *standIn =
+        [[CSAdmittingEntitlements alloc] initWithTarget:entitlements];
+    id admitted = orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info, standIn);
+
+    if (!admitted) {
+        CSLog("runtime admission produced no declaration for %s — CarKit did not "
+              "consult the stand-in, or wants more than the entitlement",
+              identifier.UTF8String);
+        return result;
+    }
+
+    CSRecordRuntimeAdmission(identifier);
+    CSLog("%s admitted at runtime — no on-disk patch required",
+          identifier.UTF8String);
+    return admitted;
+}
+
+static void CSInstallRuntimeAdmission(Class declaration) {
+    if (!CSMayInstallRuntimeAdmission()) {
+        CSVLog("runtime admission not installed in this process");
+        return;
+    }
+
+    BOOL factory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForBundleIdentifier:info:entitlements:),
+        (IMP)cs_declarationForBundleInfoEnts, (IMP *)&orig_declarationForBundleInfoEnts);
+
+    if (!factory) {
+        CSLog("WARNING: declarationForBundleIdentifier:info:entitlements: is absent; "
+              "runtime admission unavailable, falling back to the on-disk patch");
+        return;
+    }
+
+    CSLog("runtime admission installed in %s (%s, no system class patched)", NSProcessInfo.processInfo.processName.UTF8String, CSRuntimeAdmissionIsObserveOnly() ? "observe-only" : "admitting");
+}
+
 static void CSInstallDeclarationTrace(void) {
     Class declaration = CSLookupClass("CRCarPlayAppDeclaration");
     if (!declaration) return;
@@ -177,6 +439,8 @@ static void CSInstallDeclarationTrace(void) {
     CSSwizzleInstanceMethod(declaration, @selector(setBundleIdentifier:),
                               (IMP)cs_setBundleIdentifier,
                               (IMP *)&orig_setBundleIdentifier);
+
+    CSInstallRuntimeAdmission(declaration);
 }
 
 #pragma mark - Install

@@ -7,19 +7,23 @@
 // binary, trusting the new cdhash, and re-registering with LaunchServices. All of
 // that needs root and none of it is possible inside a sandboxed app.
 //
-// The daemon is a *reconciler*, not a command queue: on every preference change it
-// compares the set of enabled bundle identifiers against the set it has already
-// patched, and re-verifies every one of them, not just the ones it hasn't seen
-// before. That matters because an App Store update re-signs a bundle's binary
-// with Apple's own signature, silently stripping the SBStarkCapable entitlement
-// this daemon adds — the app just falls off CarPlay with no notification. Always
-// re-checking (CSApplyPatch reads live entitlements and is a fast no-op when
-// the patch is already in place) is what makes that self-heal instead of being
-// masked forever by "we already touched this bundle once" state.
+// Patching an app bundle only ever happens when the user asks for it, by tapping
+// "Patch Now" for that one app. Enabling an app in Settings records the intent
+// and nothing more; installing the package, rebooting, resprings and preference
+// changes never re-sign a bundle on their own. An earlier build re-verified every
+// enabled app on each reconcile pass, which meant one bad assumption about a
+// bundle was applied to the user's whole enabled list unattended — that is how a
+// broken patch reached an app nobody had touched that session.
 //
-// Reconcile runs at boot and on every preference change. A manual "patch now"
-// request is deliberately targeted to the requested app so its UI gets one
-// prompt result without waiting for unrelated enabled apps to be re-verified.
+// The cost of that choice is that a patch does not self-heal: an App Store update
+// re-signs the bundle with Apple's own signature and silently strips the
+// SBStarkCapable entitlement this daemon adds, so the app falls off CarPlay until
+// the user taps Patch Now again. CSPatchState records the app version each patch
+// was applied against, and the Settings screen uses it to say so.
+//
+// Reconcile still runs at boot and on every preference change, but its only
+// bundle-touching job is the reverse direction: an app the user has disabled is
+// restored from its backup.
 //
 // The outcome of every attempt — success, failure, and which app version it was
 // attempted against — is recorded in CSPatchState. That record is the
@@ -876,15 +880,14 @@ static void CSReconcile(void) {
         }];
     }
 
-    // Every desired bundle is re-verified on every reconcile pass, not just the
-    // ones missing from the indicator. CSApplyPatch reads the binary's live
-    // entitlements first and is a cheap no-op when SBStarkCapable is already
-    // set, so this costs almost nothing when nothing changed on disk — but it is
-    // the only way to notice an App Store update silently stripped the patch.
-    for (NSString *bundleID in desired) {
-        CSAttemptAndRecordPatch(bundleID);
-    }
-
+    // Reconcile deliberately does not patch anything. Enabling an app records
+    // the intent; the bundle is only ever written by an explicit "Patch Now"
+    // (CSHandlePatchRequest). Nothing here — not a boot, not a respring, not a
+    // preference change — re-signs an app the user did not just ask for.
+    //
+    // Reverting stays automatic, because it is the undo half of a modification
+    // the user already approved: disabling an app must put its bundle back
+    // whether or not the user thinks to press anything.
     NSArray<NSString *> *patched = CSPatchStateAllPatchedIdentifiers();
     for (NSString *bundleID in patched) {
         if ([desired containsObject:bundleID]) continue;
@@ -892,7 +895,7 @@ static void CSReconcile(void) {
         CSPatchStateRemove(bundleID);
     }
 
-    CSLog("reconciled: %lu enabled", (unsigned long)desired.count);
+    CSLog("reconciled: %lu enabled (patching is manual)", (unsigned long)desired.count);
 }
 
 /// Handles a manual "Patch Now" request from Settings. This must write one
