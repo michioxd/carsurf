@@ -65,6 +65,46 @@ admission ledger, and then verify the scene launch path. The research branch is
 intentionally not merged because it was based on an earlier Portal layout and
 would remove current dual-app code if merged wholesale.
 
+## Reality ledger: methods already tested
+
+This table records observed results from the prior sessions. “Proven” means it
+was exercised on a device and produced the stated log/result. “Research-only”
+means the code and instrumentation are preserved on the separate research
+branch but are not part of the current installed dual-app build.
+
+| Method | Device / release | Result | Use for next work |
+| --- | --- | --- | --- |
+| LaunchServices entitlement getter spoof (`LSBundleProxy`) | RootHide iPhone X, iOS 16.7.12 | **Proven.** Runtime admission installed; helper ran relay-only with no app patch; CarPlay loaded allowlisted apps. | Keep as the iOS 16/17 path only. |
+| iOS 16/17 scene-manifest and typed entitlement hooks | RootHide iPhone X, iOS 16.7.12 | **Proven with guardrails.** Typed getters and manifest masking worked. Fabricated dictionaries, broad entitlement hooks, and wrong object types previously caused safe mode/crashes. | Do not run these hooks on iOS 18. |
+| iOS 18 `LSBundleProxy` admission | iOS 18.5 | **Failed / irrelevant.** CarKit did not consult this path for the initial app roster. Earlier broad versions caused SpringBoard or CarPlay instability. | Do not spend more time on this gate. |
+| iOS 18 `CRCarPlayAppPolicyEvaluator` mutation | iOS 18.5, current dual-app build | **Partially proven.** Logs show policies promoted for existing declarations, including YouTube, but an ordinary app with no declaration never reaches this hook. | Retain as the final policy stage, not the admission stage. |
+| iOS 18 declaration-factory + per-call `NSProxy` stand-in | iOS 18.5 FPT Play research branch | **Research-only but successful in the preserved experiment.** Factory observed in SpringBoard; 492 calls / 66 declarations; stand-in answered `SBStarkCapable` and produced a valid declaration without changing the app. | Port this exact narrow experiment into the current branch. |
+| Global `LSBundleInfoCachedValues` swizzle | iOS 18.5 FPT Play research | **Failed / unsafe.** CarPlay link entered an endless “connecting” retry loop. | Never use as the implementation mechanism. |
+| RootHide app-container trust-cache patch | RootHide iPhone X, iOS 16.7.12 | **Unavailable.** `jbctl trustcache add` refused app-container paths; this is why runtime admission was required for older RootHide testing. | Runtime route is mandatory where app bundles cannot be trusted. |
+| On-disk re-sign/patch route | Rootless iPhone 11, iOS 18.5 | **Proven, but invasive.** Build 91 helper logs show YouTube repaired and verified; six enabled apps reconciled. It changes signatures and remains the current iOS 18 fallback. | Keep only as fallback while runtime admission is developed. |
+| Rootless Portal rendering | Rootless iPhone 11, iOS 18.5 | **Proven.** Build 93 hosted YouTube and Vietmap simultaneously at approximately 296/297 px panes; close action was received. | Reuse the existing scene bridge after runtime admission. |
+
+The practical conclusion is narrow: the only unmodified-app iOS 18 route that
+has produced a declaration is the factory retry with a per-call stand-in. The
+policy hook, Portal capture, and scene bridge are downstream pieces that already
+work once CarKit has a declaration.
+
+## Tested build/device checkpoints
+
+- RootHide build 89 (`iphoneos-arm64e`) installed on iPhone X (`iPhone10,6`,
+  iOS 16.7.12). Helper, Portal registration, relay updates, and runtime
+  admission hooks were verified after respring.
+- Rootless build 91 (`iphoneos-arm64`) installed on iPhone 11 (`iPhone12,1`,
+  iOS 18.5). The launch-daemon path was corrected to `/var/jb/...`; helper
+  reconciliation and Portal registration were verified after respring.
+- Rootless build 93 installed on the same iPhone 11. The dedicated sidebar
+  action slot was verified at both 640×360 and 640×240 CarPlay bounds, and the
+  close notification closed Portal and both source processes.
+
+These are compatibility checkpoints, not proof that iOS 18 runtime admission
+is complete. The current iOS 18 device result still depends on the on-disk
+helper patch for ordinary apps.
+
 ## The runtime-only architecture
 
 The desired flow is:
