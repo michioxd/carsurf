@@ -144,8 +144,30 @@ work once CarKit has a declaration.
   close notification closed Portal and both source processes.
 
 These are compatibility checkpoints, not proof that iOS 18 runtime admission
-is complete. The current iOS 18 device result still depends on the on-disk
-helper patch for ordinary apps.
+works on every release. The dual-app branch still uses the on-disk helper patch;
+the research branch now has the separate device result recorded below.
+
+### Latest runtime-admission device test
+
+After migrating this document to `research/fpt-play-runtime-admission`, the
+branch was built as rootless (`iphoneos-arm64`) and installed on the configured
+iPhone 11 running iOS 18.5. The FPT Play executable was inspected before the
+test and contained no `SBStarkCapable` or `CARCapableApp` entitlement. After a
+SpringBoard restart and the required wait, the device log recorded:
+
+```text
+enumerated enabled bundle ftel.rad.fptplay -> nil
+stand-in received -boolForKey:
+admission key answered via -boolForKey:
+declaration built for ftel.rad.fptplay
+ftel.rad.fptplay admitted at runtime — no on-disk patch required
+```
+
+The same run logged the factory hook and policy hook installed in SpringBoard,
+CarPlay, and CarPlayTemplateUIHost. The helper reported `reconciled: 7 enabled
+(patching is manual)`, so this test did not re-sign or trust-cache FPT Play.
+This is the first current-branch device confirmation of the preserved proxy
+experiment; it proves iOS 18.5 only and says nothing yet about iOS 26.
 
 ## The runtime-only architecture
 
