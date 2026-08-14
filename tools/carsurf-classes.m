@@ -13,6 +13,7 @@
 
 static void LoadCarPlayFrameworks(void) {
     static const char *const paths[] = {
+        "/System/Library/PrivateFrameworks/DashBoard.framework/DashBoard",
         "/System/Library/PrivateFrameworks/CarPlaySupport.framework/CarPlaySupport",
         "/System/Library/PrivateFrameworks/CarPlayUI.framework/CarPlayUI",
         "/System/Library/PrivateFrameworks/CarPlayUIServices.framework/CarPlayUIServices",

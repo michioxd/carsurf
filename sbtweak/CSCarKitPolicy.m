@@ -6,6 +6,7 @@
 #import "CSPatchState.h"
 #import "CSRuntime.h"
 #import <objc/message.h>
+#import <objc/runtime.h>
 
 // Gate G1 as it exists on iOS 18.x.
 //
@@ -51,6 +52,8 @@
 /// Defined with the runtime-admission hooks below; the policy hooks are declared
 /// first because CarKit installs them in that order.
 static BOOL CSIsRuntimeAdmitted(NSString *bundleID);
+static BOOL CSRuntimePolicyEligible(NSString *bundleID);
+static void CSLogAdmittedDeclarationShape(id declaration, NSString *bundleID);
 
 /// Where runtime admission may install.
 ///
@@ -134,7 +137,7 @@ static id cs_effectivePolicyForAppDeclaration(id self, SEL _cmd, id declaration)
     if (![config isBundleEnabled:bundleID]) return policy;
 
     if (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
-        CSIsRuntimeAdmitted(bundleID)) {
+        CSRuntimePolicyEligible(bundleID)) {
         // Same requirement either way: CSApp.m is bridging this app's scene —
         // re-signed, runtime-admitted, or not — so CarKit needs to be told not
         // to expect a template delegate. See CSPatchStatusNativeBridged.
@@ -170,7 +173,7 @@ static id cs_effectivePolicyInVehicle(id self, SEL _cmd, id declaration, id cert
     CSVLog("in-vehicle policy request for %s", bundleID.UTF8String);
     if ([config isBundleEnabled:bundleID] &&
         (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
-         CSIsRuntimeAdmitted(bundleID))) {
+         CSRuntimePolicyEligible(bundleID))) {
         CSPromotePolicy(policy, bundleID);
     }
 
@@ -266,7 +269,27 @@ static NSString *const kCSRuntimeAdmissionKey = @"SBStarkCapable";
 }
 
 - (NSMethodSignature *)methodSignatureForSelector:(SEL)sel {
-    return [_target methodSignatureForSelector:sel];
+    NSMethodSignature *signature = [_target methodSignatureForSelector:sel];
+    if (signature) return signature;
+
+    // CarPlay's FBSApplicationInfo returns an immutable NSDictionary for
+    // -entitlements, while SpringBoard returns LSBundleInfoCachedValues.  The
+    // latter has boolForKey:/typed objectForKey: methods; NSDictionary does
+    // not.  Supplying matching signatures lets the proxy absorb those calls
+    // instead of forwarding an unsupported selector into the dictionary.
+    const char *name = sel_getName(sel);
+    if (strcmp(name, "boolForKey:") == 0) return
+        [NSMethodSignature signatureWithObjCTypes:"B@:@"];
+    if (strcmp(name, "objectForKey:ofClass:valuesOfClass:") == 0 ||
+        strcmp(name, "objectForKey:checkingKeyClass:checkingValueClass:") == 0)
+        return [NSMethodSignature signatureWithObjCTypes:"@@:@##"];
+    if (strcmp(name, "objectForKey:ofClass:") == 0)
+        return [NSMethodSignature signatureWithObjCTypes:"@@:@#"];
+    if (strcmp(name, "objectForKey:ofType:") == 0)
+        return [NSMethodSignature signatureWithObjCTypes:"@@:@q"];
+    if (strcmp(name, "objectForKey:") == 0)
+        return [NSMethodSignature signatureWithObjCTypes:"@@:@"];
+    return nil;
 }
 
 // LSBundleInfoCachedValues vends six different objectForKey: shapes
@@ -313,6 +336,34 @@ static NSString *const kCSRuntimeAdmissionKey = @"SBStarkCapable";
             }
             return;
         }
+
+        // If the real object has this selector, preserve its exact behavior.
+        // Otherwise (the FBS dictionary-backed case) answer from ordinary
+        // -objectForKey: without ever sending boolForKey: to NSDictionary.
+        if (![_target respondsToSelector:invocation.selector]) {
+            id value = [_target respondsToSelector:@selector(objectForKey:)]
+                ? [_target objectForKey:key] : nil;
+            if (isBoolLookup) {
+                BOOL answer = [value respondsToSelector:@selector(boolValue)]
+                    ? [value boolValue] : NO;
+                [invocation setReturnValue:&answer];
+            } else {
+                Class expected = Nil;
+                if (strcmp(name, "objectForKey:ofClass:") == 0) {
+                    __unsafe_unretained Class requested = Nil;
+                    [invocation getArgument:&requested atIndex:3];
+                    expected = requested;
+                } else if (strcmp(name, "objectForKey:ofClass:valuesOfClass:") == 0 ||
+                           strcmp(name, "objectForKey:checkingKeyClass:checkingValueClass:") == 0) {
+                    __unsafe_unretained Class requested = Nil;
+                    [invocation getArgument:&requested atIndex:3];
+                    expected = requested;
+                }
+                if (expected && value && ![value isKindOfClass:expected]) value = nil;
+                [invocation setReturnValue:&value];
+            }
+            return;
+        }
     }
     [invocation invokeWithTarget:_target];
 }
@@ -336,10 +387,35 @@ static BOOL CSIsRuntimeAdmitted(NSString *bundleID) {
     }
 }
 
+/// SpringBoard may construct a declaration while CarPlay evaluates it in a
+/// separate process, so the in-memory admission set is not sufficient. Once an
+/// enabled non-native declaration reaches this hook, it has already passed the
+/// declaration factory; promote it in this process as well. This is the
+/// cross-process half of runtime admission and does not alter the app bundle.
+static BOOL CSRuntimePolicyEligible(NSString *bundleID) {
+    if (bundleID.length == 0) return NO;
+    CSConfig *config = CSConfig.sharedConfig;
+    if (!config.isEnabled || ![config isBundleEnabled:bundleID]) return NO;
+    if (CSPatchStateIsNative(bundleID)) return NO;
+    return CSIsRuntimeAdmitted(bundleID) || !CSPatchStateIsPatched(bundleID);
+}
+
 static void CSRecordRuntimeAdmission(NSString *bundleID) {
     @synchronized(CSRuntimeAdmittedBundles()) {
         [CSRuntimeAdmittedBundles() addObject:bundleID];
     }
+}
+
+static void CSLogAdmittedDeclarationShape(id declaration, NSString *bundleID) {
+    if (!declaration) return;
+    BOOL templates = [declaration respondsToSelector:@selector(supportsTemplates)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(declaration, @selector(supportsTemplates)) : NO;
+    BOOL playable = [declaration respondsToSelector:@selector(supportsPlayableContent)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(declaration, @selector(supportsPlayableContent)) : NO;
+    BOOL system = [declaration respondsToSelector:@selector(isSystemApp)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(declaration, @selector(isSystemApp)) : NO;
+    CSLog("admitted declaration shape %s (templates=%d playable=%d system=%d)",
+          bundleID.UTF8String, templates, playable, system);
 }
 
 // --- The gate ------------------------------------------------------------------
@@ -360,33 +436,17 @@ static BOOL CSShouldAdmitAtRuntime(NSString *bundleID) {
 }
 
 static id (*orig_declarationForBundleInfoEnts)(Class, SEL, id, id, id);
-static id cs_declarationForBundleInfoEnts(Class self, SEL _cmd, id bundleID, id info,
-                                          id entitlements) {
-    id result = orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info, entitlements);
+typedef id (^CSFactoryRetryBlock)(id standIn);
 
-    // One line per process, so "no admissions" can be told apart from "the
-    // enumeration ran before this hook was installed" — the two look identical
-    // in the log otherwise, and they need opposite fixes.
-    static BOOL sawFirstCall = NO;
-    if (!sawFirstCall) {
-        sawFirstCall = YES;
-        CSLog("declaration factory reached (first call: %s -> %s)",
-              [bundleID description].UTF8String, result ? "declaration" : "nil");
-    }
-
-    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
-
-    // Bounded to the user's allowlist — a handful of apps, not the ~490 the
-    // enumeration walks — so this stays readable while the path is being
-    // brought up.
+static id CSFinishFactoryAdmission(NSString *identifier, id result, id entitlements,
+                                   CSFactoryRetryBlock retry, const char *variant) {
     if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
-        CSLog("enumerated enabled bundle %s -> %s", identifier.UTF8String,
+        CSLog("factory %s enabled bundle %s -> %s", variant, identifier.UTF8String,
               result ? "declaration" : "nil");
+        if (result) CSLogAdmittedDeclarationShape(result, identifier);
     }
 
-    if (CSRuntimeAdmissionIsObserveOnly()) return result;
-
-    if (result) return result;
+    if (CSRuntimeAdmissionIsObserveOnly() || result) return result;
     if (!CSShouldAdmitAtRuntime(identifier)) {
         if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
             CSLog("not admitting %s (suppressed=%d globalEnabled=%d native=%d)",
@@ -395,22 +455,459 @@ static id cs_declarationForBundleInfoEnts(Class self, SEL _cmd, id bundleID, id 
         }
         return result;
     }
+    if (!entitlements || !retry) {
+        CSLog("runtime admission skipped for %s: factory %s supplied no entitlement object",
+              identifier.UTF8String, variant);
+        return result;
+    }
 
     CSAdmittingEntitlements *standIn =
         [[CSAdmittingEntitlements alloc] initWithTarget:entitlements];
-    id admitted = orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info, standIn);
-
+    id admitted = retry(standIn);
     if (!admitted) {
-        CSLog("runtime admission produced no declaration for %s — CarKit did not "
+        CSLog("runtime admission produced no declaration for %s via %s — CarKit did not "
               "consult the stand-in, or wants more than the entitlement",
-              identifier.UTF8String);
+              identifier.UTF8String, variant);
         return result;
     }
 
     CSRecordRuntimeAdmission(identifier);
-    CSLog("%s admitted at runtime — no on-disk patch required",
-          identifier.UTF8String);
+    CSLogAdmittedDeclarationShape(admitted, identifier);
+    CSLog("%s admitted at runtime via %s — no on-disk patch required",
+          identifier.UTF8String, variant);
     return admitted;
+}
+
+// CarPlay's FBS path can hand the factory a frozen NSDictionary instead of the
+// LSBundleInfoCachedValues object seen in SpringBoard.  The original factory
+// sends boolForKey: immediately, so waiting for a nil result is too late — the
+// first call itself aborts CarPlay.  Replace that argument before the first
+// call when it lacks the typed cached-values interface.
+static BOOL CSFactoryNeedsEntitlementPreflight(NSString *identifier, id entitlements) {
+    return !CSRuntimeAdmissionIsObserveOnly() &&
+           CSShouldAdmitAtRuntime(identifier) && entitlements &&
+           ![entitlements respondsToSelector:@selector(boolForKey:)];
+}
+
+static id CSFinishPreflightAdmission(NSString *identifier, id result,
+                                      const char *variant) {
+    if (!result) {
+        CSLog("runtime admission produced no declaration for %s via preflight %s",
+              identifier.UTF8String, variant);
+        return nil;
+    }
+    CSRecordRuntimeAdmission(identifier);
+    CSLogAdmittedDeclarationShape(result, identifier);
+    CSLog("%s admitted at runtime via preflight %s — no on-disk patch required",
+          identifier.UTF8String, variant);
+    return result;
+}
+
+static id cs_declarationForBundleInfoEnts(Class self, SEL _cmd, id bundleID, id info,
+                                          id entitlements) {
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+    BOOL preflight = CSFactoryNeedsEntitlementPreflight(identifier, entitlements);
+    id initialEntitlements = preflight
+        ? [[CSAdmittingEntitlements alloc] initWithTarget:entitlements] : entitlements;
+    id result = orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info,
+                                                   initialEntitlements);
+    static BOOL sawFirstCall = NO;
+    if (!sawFirstCall) {
+        sawFirstCall = YES;
+        CSLog("declaration factory reached (first call: %s -> %s)",
+              [bundleID description].UTF8String, result ? "declaration" : "nil");
+    }
+    if (preflight) return CSFinishPreflightAdmission(identifier, result, "info:entitlements:");
+    return CSFinishFactoryAdmission(identifier, result, entitlements,
+        ^id(id standIn) {
+            return orig_declarationForBundleInfoEnts(self, _cmd, bundleID, info, standIn);
+        }, "info:entitlements:");
+}
+
+// CarPlay.app uses the property-list factory variants rather than the
+// LaunchServices-object variant used by SpringBoard.  Hooking only the latter
+// admits FPT in SpringBoard but leaves CarPlay with no declaration to evaluate.
+static id (*orig_declarationForBundleEntInfoPlist)(Class, SEL, id, id, id);
+static id cs_declarationForBundleEntInfoPlist(Class self, SEL _cmd, id bundleID,
+                                              id entitlements, id infoPlist) {
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+    BOOL preflight = CSFactoryNeedsEntitlementPreflight(identifier, entitlements);
+    id initialEntitlements = preflight
+        ? [[CSAdmittingEntitlements alloc] initWithTarget:entitlements] : entitlements;
+    id result = orig_declarationForBundleEntInfoPlist(self, _cmd, bundleID,
+                                                       initialEntitlements, infoPlist);
+    if (preflight) return CSFinishPreflightAdmission(identifier, result,
+                                                      "entitlements:infoPlist:");
+    return CSFinishFactoryAdmission(identifier, result, entitlements,
+        ^id(id standIn) {
+            return orig_declarationForBundleEntInfoPlist(self, _cmd, bundleID,
+                                                          standIn, infoPlist);
+        }, "entitlements:infoPlist:");
+}
+
+static id (*orig_declarationForBundleInfoEntsPath)(Class, SEL, id, id, id, id);
+static id cs_declarationForBundleInfoEntsPath(Class self, SEL _cmd, id bundleID,
+                                              id info, id entitlements, id bundlePath) {
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+    BOOL preflight = CSFactoryNeedsEntitlementPreflight(identifier, entitlements);
+    id initialEntitlements = preflight
+        ? [[CSAdmittingEntitlements alloc] initWithTarget:entitlements] : entitlements;
+    id result = orig_declarationForBundleInfoEntsPath(self, _cmd, bundleID, info,
+                                                       initialEntitlements, bundlePath);
+    if (preflight) return CSFinishPreflightAdmission(identifier, result,
+                                                      "info:entitlements:bundlePath:");
+    return CSFinishFactoryAdmission(identifier, result, entitlements,
+        ^id(id standIn) {
+            return orig_declarationForBundleInfoEntsPath(self, _cmd, bundleID, info,
+                                                          standIn, bundlePath);
+        }, "info:entitlements:bundlePath:");
+}
+
+static id (*orig_declarationForBundlePropertyLists)(Class, SEL, id, id, id);
+static id cs_declarationForBundlePropertyLists(Class self, SEL _cmd, id bundleID,
+                                                id infoPlist, id entitlementsPlist) {
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+    BOOL preflight = CSFactoryNeedsEntitlementPreflight(identifier, entitlementsPlist);
+    id initialEntitlements = preflight
+        ? [[CSAdmittingEntitlements alloc] initWithTarget:entitlementsPlist]
+        : entitlementsPlist;
+    id result = orig_declarationForBundlePropertyLists(self, _cmd, bundleID,
+                                                        infoPlist, initialEntitlements);
+    if (preflight) return CSFinishPreflightAdmission(identifier, result,
+                                                      "infoPropertyList:entitlementsPropertyList:");
+    return CSFinishFactoryAdmission(identifier, result, entitlementsPlist,
+        ^id(id standIn) {
+            return orig_declarationForBundlePropertyLists(self, _cmd, bundleID,
+                                                           infoPlist, standIn);
+        }, "infoPropertyList:entitlementsPropertyList:");
+}
+
+static id (*orig_declarationForBundlePropertyListsPath)(Class, SEL, id, id, id, id);
+static id cs_declarationForBundlePropertyListsPath(Class self, SEL _cmd, id bundleID,
+                                                    id infoPlist, id entitlementsPlist,
+                                                    id bundlePath) {
+    NSString *identifier = [bundleID isKindOfClass:NSString.class] ? bundleID : nil;
+    BOOL preflight = CSFactoryNeedsEntitlementPreflight(identifier, entitlementsPlist);
+    id initialEntitlements = preflight
+        ? [[CSAdmittingEntitlements alloc] initWithTarget:entitlementsPlist]
+        : entitlementsPlist;
+    id result = orig_declarationForBundlePropertyListsPath(self, _cmd, bundleID,
+                                                            infoPlist, initialEntitlements,
+                                                            bundlePath);
+    if (preflight) return CSFinishPreflightAdmission(identifier, result,
+                                                      "infoPropertyList:entitlementsPropertyList:bundlePath:");
+    return CSFinishFactoryAdmission(identifier, result, entitlementsPlist,
+        ^id(id standIn) {
+            return orig_declarationForBundlePropertyListsPath(self, _cmd, bundleID,
+                                                               infoPlist, standIn, bundlePath);
+        }, "infoPropertyList:entitlementsPropertyList:bundlePath:");
+}
+
+static NSString *CSFactoryObjectBundleIdentifier(id object) {
+    SEL selectors[] = {
+        @selector(bundleIdentifier), @selector(un_applicationBundleIdentifier),
+        @selector(applicationIdentifier)
+    };
+    for (NSUInteger i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
+        SEL selector = selectors[i];
+        if (![object respondsToSelector:selector]) continue;
+        id value = ((id (*)(id, SEL))objc_msgSend)(object, selector);
+        if ([value isKindOfClass:NSString.class]) return value;
+    }
+    return nil;
+}
+
+static id (*orig_declarationForAppProxy)(Class, SEL, id);
+static id cs_declarationForAppProxy(Class self, SEL _cmd, id appProxy) {
+    id result = orig_declarationForAppProxy(self, _cmd, appProxy);
+    NSString *identifier = CSFactoryObjectBundleIdentifier(appProxy);
+    if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
+        CSLog("factory appProxy bundle %s -> %s", identifier.UTF8String,
+              result ? "declaration" : "nil");
+    }
+    return result;
+}
+
+static id (*orig_declarationForAppRecord)(Class, SEL, id);
+static id cs_declarationForAppRecord(Class self, SEL _cmd, id appRecord) {
+    id result = orig_declarationForAppRecord(self, _cmd, appRecord);
+    NSString *identifier = CSFactoryObjectBundleIdentifier(appRecord);
+    if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
+        CSLog("factory appRecord bundle %s -> %s", identifier.UTF8String,
+              result ? "declaration" : "nil");
+    }
+    return result;
+}
+
+// DBApplicationInfo is private to DashBoard and is not present in the
+// standalone diagnostic process.  Dump the contract from inside CarPlay,
+// where the class and its real instances are already loaded.  This is
+// deliberately read-only: the result is used only to identify the complete
+// selector/initializer surface required by Dashboard before attempting any
+// future roster construction.
+static void CSDumpDashboardRosterContract(id roster) {
+    static BOOL dumped = NO;
+    if (dumped || ![NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) return;
+    dumped = YES;
+
+    id sample = [roster isKindOfClass:NSArray.class] ? [roster firstObject] : nil;
+    Class cls = sample ? object_getClass(sample) : CSLookupClass("DBApplicationInfo");
+    if (!cls) {
+        CSLog("Dashboard roster contract unavailable (DBApplicationInfo not loaded)");
+        return;
+    }
+
+    CSLog("Dashboard roster sample class=%s", class_getName(cls));
+    for (Class current = cls; current; current = class_getSuperclass(current)) {
+        unsigned int methodCount = 0;
+        Method *methods = class_copyMethodList(current, &methodCount);
+        CSLog("Dashboard roster methods class=%s count=%u",
+              class_getName(current), methodCount);
+        for (unsigned int i = 0; i < methodCount; i++) {
+            CSLog("  dashboard method -%s types=%s",
+                  sel_getName(method_getName(methods[i])),
+                  method_getTypeEncoding(methods[i]));
+        }
+        free(methods);
+
+        unsigned int ivarCount = 0;
+        Ivar *ivars = class_copyIvarList(current, &ivarCount);
+        for (unsigned int i = 0; i < ivarCount; i++) {
+            CSLog("  dashboard ivar %s type=%s",
+                  ivar_getName(ivars[i]), ivar_getTypeEncoding(ivars[i]));
+        }
+        free(ivars);
+    }
+
+    Class meta = object_getClass(cls);
+    unsigned int classMethodCount = 0;
+    Method *classMethods = class_copyMethodList(meta, &classMethodCount);
+    CSLog("Dashboard roster class methods class=%s count=%u",
+          class_getName(cls), classMethodCount);
+    for (unsigned int i = 0; i < classMethodCount; i++) {
+        CSLog("  dashboard method +%s types=%s",
+              sel_getName(method_getName(classMethods[i])),
+              method_getTypeEncoding(classMethods[i]));
+    }
+    free(classMethods);
+}
+
+static id CSCreateDBApplicationInfo(NSString *identifier) {
+    Class dbClass = CSLookupClass("DBApplicationInfo");
+    Class proxyClass = CSLookupClass("LSApplicationProxy");
+    SEL proxySelector = @selector(applicationProxyForIdentifier:);
+    SEL initSelector = @selector(initWithApplicationProxy:);
+    if (!dbClass || !proxyClass || ![proxyClass respondsToSelector:proxySelector] ||
+        ![dbClass instancesRespondToSelector:initSelector]) {
+        return nil;
+    }
+
+    id proxy = ((id (*)(id, SEL, id))objc_msgSend)(
+        proxyClass, proxySelector, identifier);
+    id candidate = proxy
+        ? ((id (*)(id, SEL, id))objc_msgSend)([dbClass alloc], initSelector, proxy)
+        : nil;
+    return candidate;
+}
+
+// Construction probe: Dashboard's concrete object inherits the normal
+// FBSApplicationInfo initializer.  This also serves as the only roster
+// construction path used below; no fabricated subclass is involved.
+static void CSTestDBApplicationInfoConstruction(void) {
+    static BOOL tested = NO;
+    if (tested || ![NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) return;
+    tested = YES;
+
+    id candidate = CSCreateDBApplicationInfo(@"ftel.rad.fptplay");
+    if (!candidate) {
+        CSLog("DBApplicationInfo construction probe returned nil");
+        return;
+    }
+
+    BOOL hidden = [candidate respondsToSelector:@selector(isHidden)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(candidate, @selector(isHidden)) : NO;
+    BOOL valid = [candidate respondsToSelector:@selector(isValid)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(candidate, @selector(isValid)) : NO;
+    BOOL installed = [candidate respondsToSelector:@selector(isInstalled)]
+        ? ((BOOL (*)(id, SEL))objc_msgSend)(candidate, @selector(isInstalled)) : NO;
+    id declaration = [candidate respondsToSelector:@selector(carPlayDeclaration)]
+        ? ((id (*)(id, SEL))objc_msgSend)(candidate, @selector(carPlayDeclaration)) : nil;
+    CSLog("DBApplicationInfo construction probe class=%s hidden=%d valid=%d installed=%d declaration=%s",
+          object_getClassName(candidate), hidden, valid, installed,
+          declaration ? "present" : "nil");
+}
+
+// The previous FBS subclass insertion is permanently disabled.  The tested
+// DBApplicationInfo initializer is the only candidate allowed to reach the
+// experimental roster path.
+static BOOL CSAllowExperimentalRosterInsertion(void) {
+    return YES;
+}
+
+static BOOL (*orig_supportsCarPlayDashboardScene)(id, SEL);
+static BOOL cs_supportsCarPlayDashboardScene(id self, SEL _cmd) {
+    BOOL result = orig_supportsCarPlayDashboardScene(self, _cmd);
+    NSString *identifier = CSFactoryObjectBundleIdentifier(self);
+    if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
+        CSLog("record supportsCarPlayDashboardScene %s -> %d",
+              identifier.UTF8String, result);
+    }
+    return result;
+}
+
+static void CSInstallRecordTrace(void) {
+    Class record = CSLookupClass("LSApplicationRecord");
+    if (!record) return;
+    CSSwizzleInstanceMethod(record, @selector(supportsCarPlayDashboardScene),
+                             (IMP)cs_supportsCarPlayDashboardScene,
+                             (IMP *)&orig_supportsCarPlayDashboardScene);
+}
+
+static id (*orig_allInstalledApplications)(id, SEL);
+static id cs_allInstalledApplications(id self, SEL _cmd) {
+    id result = orig_allInstalledApplications(self, _cmd);
+    CSDumpDashboardRosterContract(result);
+    CSTestDBApplicationInfoConstruction();
+    static BOOL loggedStack = NO;
+    if (!loggedStack && [NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) {
+        loggedStack = YES;
+        CSLog("FBSApplicationLibrary allInstalledApplications CarPlay caller:");
+        for (NSString *frame in NSThread.callStackSymbols) CSLog("    %s", frame.UTF8String);
+    }
+    if ([result isKindOfClass:NSArray.class]) {
+        BOOL foundFPT = NO;
+        for (id application in result) {
+            NSString *identifier = CSFactoryObjectBundleIdentifier(application);
+            if (identifier && ([CSConfig.sharedConfig isBundleEnabled:identifier] ||
+                                [identifier isEqualToString:@"com.google.ios.youtube"])) {
+                CSLog("FBS roster item %s class=%s carPlayDeclaration=%d",
+                      identifier.UTF8String, object_getClassName(application),
+                      [application respondsToSelector:@selector(carPlayDeclaration)]);
+            }
+            if ([identifier isEqualToString:@"ftel.rad.fptplay"]) {
+                foundFPT = YES;
+                break;
+            }
+        }
+        CSLog("FBSApplicationLibrary allInstalledApplications count=%lu fpt=%d",
+              (unsigned long)[result count], foundFPT);
+
+        // CarPlay receives a filtered FBS library (34 entries on iOS 18.5),
+        // while SpringBoard's library still contains FPT.  Construct the
+        // concrete Dashboard object that CarPlay uses for every existing
+        // entry.  It inherits FBSApplicationInfo's proxy initializer but adds
+        // Dashboard's private state and selector contract.
+        if (CSAllowExperimentalRosterInsertion() && !foundFPT &&
+            [NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"] &&
+            [CSConfig.sharedConfig isBundleEnabled:@"ftel.rad.fptplay"]) {
+            id info = CSCreateDBApplicationInfo(@"ftel.rad.fptplay");
+            if (info && [info respondsToSelector:@selector(carPlayDeclaration)] &&
+                [info respondsToSelector:@selector(isValid)] &&
+                [info respondsToSelector:@selector(isInstalled)] &&
+                !((BOOL (*)(id, SEL))objc_msgSend)(info, @selector(isHidden))) {
+                BOOL valid = ((BOOL (*)(id, SEL))objc_msgSend)(info, @selector(isValid));
+                BOOL installed = ((BOOL (*)(id, SEL))objc_msgSend)(info, @selector(isInstalled));
+                id declaration = ((id (*)(id, SEL))objc_msgSend)(
+                    info, @selector(carPlayDeclaration));
+                CSLog("FPT DBApplicationInfo roster candidate valid=%d installed=%d declaration=%s class=%s",
+                      valid, installed, declaration ? "present" : "nil",
+                      object_getClassName(info));
+                if (!valid || !installed || !declaration) return result;
+                NSMutableArray *expanded = [result mutableCopy];
+                [expanded addObject:info];
+                CSLog("CarPlay FBS roster admitted DBApplicationInfo ftel.rad.fptplay in memory (%lu -> %lu)",
+                      (unsigned long)[result count], (unsigned long)[expanded count]);
+                return expanded;
+            }
+            CSLog("CarPlay FBS roster could not construct a valid DBApplicationInfo for FPT");
+        }
+    }
+    return result;
+}
+
+static id (*orig_installedApplicationsForBundleIdentifier)(id, SEL, NSString *);
+static id cs_installedApplicationsForBundleIdentifier(id self, SEL _cmd, NSString *bundleID) {
+    id result = orig_installedApplicationsForBundleIdentifier(self, _cmd, bundleID);
+    if ([bundleID isEqualToString:@"ftel.rad.fptplay"] &&
+        [NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) {
+        CSLog("FBS installedApplicationsForBundleIdentifier FPT -> %s (%s)",
+              result ? "value" : "nil", object_getClassName(result));
+    }
+    return result;
+}
+
+static id (*orig_installedApplicationWithBundleIdentifier)(id, SEL, NSString *);
+static id cs_installedApplicationWithBundleIdentifier(id self, SEL _cmd, NSString *bundleID) {
+    id result = orig_installedApplicationWithBundleIdentifier(self, _cmd, bundleID);
+    if ([bundleID isEqualToString:@"ftel.rad.fptplay"] &&
+        [NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) {
+        CSLog("FBS installedApplicationWithBundleIdentifier FPT -> %s (%s)",
+              result ? "value" : "nil", object_getClassName(result));
+    }
+    return result;
+}
+
+static id (*orig_applicationInfoForBundleIdentifier)(id, SEL, NSString *);
+static id cs_applicationInfoForBundleIdentifier(id self, SEL _cmd, NSString *bundleID) {
+    id result = orig_applicationInfoForBundleIdentifier(self, _cmd, bundleID);
+    if ([bundleID isEqualToString:@"ftel.rad.fptplay"] &&
+        [NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) {
+        CSLog("FBS applicationInfoForBundleIdentifier FPT -> %s (%s)",
+              result ? "value" : "nil", object_getClassName(result));
+    }
+    return result;
+}
+
+static void CSInstallApplicationLibraryTrace(void) {
+    Class library = CSLookupClass("FBSApplicationLibrary");
+    if (!library) return;
+    CSSwizzleInstanceMethod(library, @selector(allInstalledApplications),
+                             (IMP)cs_allInstalledApplications,
+                             (IMP *)&orig_allInstalledApplications);
+    CSSwizzleInstanceMethod(library, @selector(installedApplicationsForBundleIdentifier:),
+                             (IMP)cs_installedApplicationsForBundleIdentifier,
+                             (IMP *)&orig_installedApplicationsForBundleIdentifier);
+    CSSwizzleInstanceMethod(library, @selector(installedApplicationWithBundleIdentifier:),
+                             (IMP)cs_installedApplicationWithBundleIdentifier,
+                             (IMP *)&orig_installedApplicationWithBundleIdentifier);
+    CSSwizzleInstanceMethod(library, @selector(applicationInfoForBundleIdentifier:),
+                             (IMP)cs_applicationInfoForBundleIdentifier,
+                             (IMP *)&orig_applicationInfoForBundleIdentifier);
+}
+
+// Read-only roster diagnostics.  These methods are called by SpringBoard's
+// CarPlay icon service while it builds the head-unit app library; logging the
+// exact bundle IDs lets us distinguish a missing declaration from a denylist or
+// icon-state filter without changing any system return value.
+static BOOL (*orig_denylistContains)(id, SEL, NSString *);
+static BOOL cs_denylistContains(id self, SEL _cmd, NSString *bundleID) {
+    BOOL result = orig_denylistContains(self, _cmd, bundleID);
+    if (bundleID && ([CSConfig.sharedConfig isBundleEnabled:bundleID] ||
+                     [bundleID isEqualToString:@"com.google.ios.youtube"])) {
+        CSLog("denylist contains %s -> %d", bundleID.UTF8String, result);
+    }
+    return result;
+}
+
+static void (*orig_fetchIconInfo)(id, SEL, NSString *, BOOL, id);
+static void cs_fetchIconInfo(id self, SEL _cmd, NSString *bundleID, BOOL inVehicle, id completion) {
+    if (bundleID && ([CSConfig.sharedConfig isBundleEnabled:bundleID] ||
+                     [bundleID isEqualToString:@"com.google.ios.youtube"])) {
+        CSLog("icon info request %s (inVehicle=%d)", bundleID.UTF8String, inVehicle);
+    }
+    orig_fetchIconInfo(self, _cmd, bundleID, inVehicle, completion);
+}
+
+static void CSInstallRosterTrace(void) {
+    Class denylist = CSLookupClass("CRCarPlayAppDenylist");
+    if (denylist) CSSwizzleInstanceMethod(denylist, @selector(containsBundleIdentifier:),
+                                           (IMP)cs_denylistContains,
+                                           (IMP *)&orig_denylistContains);
+    Class service = CSLookupClass("SBSApplicationCarPlayService");
+    if (service) CSSwizzleInstanceMethod(service,
+                                          @selector(fetchApplicationIconInformationForBundleIdentifier:inVehicle:withCompletion:),
+                                          (IMP)cs_fetchIconInfo,
+                                          (IMP *)&orig_fetchIconInfo);
 }
 
 static void CSInstallRuntimeAdmission(Class declaration) {
@@ -423,13 +920,41 @@ static void CSInstallRuntimeAdmission(Class declaration) {
         declaration, @selector(declarationForBundleIdentifier:info:entitlements:),
         (IMP)cs_declarationForBundleInfoEnts, (IMP *)&orig_declarationForBundleInfoEnts);
 
+    BOOL propertyFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForBundleIdentifier:entitlements:infoPlist:),
+        (IMP)cs_declarationForBundleEntInfoPlist,
+        (IMP *)&orig_declarationForBundleEntInfoPlist);
+    BOOL pathFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForBundleIdentifier:info:entitlements:bundlePath:),
+        (IMP)cs_declarationForBundleInfoEntsPath,
+        (IMP *)&orig_declarationForBundleInfoEntsPath);
+    BOOL plistFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForBundleIdentifier:infoPropertyList:entitlementsPropertyList:),
+        (IMP)cs_declarationForBundlePropertyLists,
+        (IMP *)&orig_declarationForBundlePropertyLists);
+    BOOL plistPathFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForBundleIdentifier:infoPropertyList:entitlementsPropertyList:bundlePath:),
+        (IMP)cs_declarationForBundlePropertyListsPath,
+        (IMP *)&orig_declarationForBundlePropertyListsPath);
+    BOOL appProxyFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForAppProxy:),
+        (IMP)cs_declarationForAppProxy, (IMP *)&orig_declarationForAppProxy);
+    BOOL appRecordFactory = CSSwizzleClassMethod(
+        declaration, @selector(declarationForAppRecord:),
+        (IMP)cs_declarationForAppRecord, (IMP *)&orig_declarationForAppRecord);
+
     if (!factory) {
         CSLog("WARNING: declarationForBundleIdentifier:info:entitlements: is absent; "
               "runtime admission unavailable, falling back to the on-disk patch");
         return;
     }
 
-    CSLog("runtime admission installed in %s (%s, no system class patched)", NSProcessInfo.processInfo.processName.UTF8String, CSRuntimeAdmissionIsObserveOnly() ? "observe-only" : "admitting");
+    CSLog("runtime admission installed in %s (%s, factories info=%d entInfoPlist=%d "
+          "infoEntPath=%d plist=%d plistPath=%d appProxy=%d appRecord=%d, no system class patched)",
+          NSProcessInfo.processInfo.processName.UTF8String,
+          CSRuntimeAdmissionIsObserveOnly() ? "observe-only" : "admitting",
+          factory, propertyFactory, pathFactory, plistFactory, plistPathFactory,
+          appProxyFactory, appRecordFactory);
 }
 
 static void CSInstallDeclarationTrace(void) {
@@ -463,6 +988,9 @@ void CSInstallCarKitPolicyHook(void) {
         (IMP *)&orig_effectivePolicyInVehicle);
 
     CSInstallDeclarationTrace();
+    CSInstallRosterTrace();
+    CSInstallRecordTrace();
+    CSInstallApplicationLibraryTrace();
 
     CSLog("CarKit policy hook installed (plain=%d, inVehicle=%d)", plain, inVehicle);
 

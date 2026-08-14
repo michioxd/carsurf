@@ -31,21 +31,18 @@ static void CSInstallCarPlayHooks(void) {
     if (CSUsesRuntimeCarPlayAdmission()) {
         CSInstallSceneManifestSpoof();
     } else {
-        CSLog("iOS 18+ — CarKit ignores LaunchServices, so runtime admission is "
-              "skipped; qualification is the helper's on-disk patch");
+        CSLog("iOS 18+ — CarKit ignores LaunchServices; declaration-factory "
+              "runtime admission is installed by the CarKit policy hook");
     }
 
     // iOS 18-era path; the two below are no-ops when their classes are
     // absent, so both generations are covered by one build.
     // Gate G1's admission check is +[CRCarPlayAppDeclaration requiredEntitlementKeys]:
     // an app qualifies by holding CARCapableApp, SBStarkCapable, or one of the
-    // com.apple.developer.carplay-* entitlements. Those are code-signed and
-    // evaluated at app-registration time, outside any process we inject into —
-    // measured directly, by hooking every LSBundleProxy entitlement accessor and
-    // observing that none is ever consulted for a non-CarPlay app. So no runtime
-    // hook can add a bundle to the candidate roster *on that release*, and
-    // qualification there is the installer's job; this hook still promotes the
-    // policy once a declaration exists.
+    // com.apple.developer.carplay-* entitlements. On iOS 18 the declaration
+    // factory receives LSBundleInfoCachedValues; CSCarKitPolicy retries that
+    // factory with a per-call proxy for enabled apps, so the bundle itself need
+    // not be re-signed. The policy hook then promotes the resulting declaration.
     CSInstallCarKitPolicyHook();
     CSInstallEntitlementSpoof();
     CSInstallAppListFilter();

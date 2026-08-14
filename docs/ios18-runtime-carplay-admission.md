@@ -169,6 +169,113 @@ CarPlay, and CarPlayTemplateUIHost. The helper reported `reconciled: 7 enabled
 This is the first current-branch device confirmation of the preserved proxy
 experiment; it proves iOS 18.5 only and says nothing yet about iOS 26.
 
+### CarPlay recovery checkpoint: do not retry the raw roster insertion
+
+On the rootless iPhone 11 (iOS 18.5), the `0.1.4-1-14+debug` experiment added a
+plain `FBSApplicationInfo` produced by
+`LSApplicationProxy → initWithApplicationProxy:` directly to CarPlay's
+filtered `FBSApplicationLibrary` result. That object does not implement
+`-carPlayDeclaration`. CarPlay then crashed in
+`-[DBApplicationController _updatePolicyForApplication:]` with:
+
+```text
+-[FBSApplicationInfo carPlayDeclaration]: unrecognized selector sent to instance
+```
+
+After downgrading to `0.1.4-1-13+debug` and running `sbreload`, CarPlay returned
+normally: `CarPlay.app`, `carkitd`, `caraccessoryd`, and
+`ACCCarPlayService` were all running, with no new CarPlay crash. The baseline
+roster correctly logged `FBSApplicationLibrary allInstalledApplications
+count=34 fpt=0`, so this package restores the connection but does not expose
+FPT Play.
+
+This is a hard negative checkpoint. Do **not** reintroduce the raw `1-14`
+insertion or treat a plain `FBSApplicationInfo` as a valid CarPlay roster
+entry. Any future in-memory insertion must preserve the object contract (in
+particular `-carPlayDeclaration`) before returning it to CarPlay. The FPT
+bundle, executable, signature, and entitlements were not modified in this
+comparison.
+
+The follow-up adapter builds are also negative checkpoints, not safe releases:
+
+- `1-21` and `1-22` crashed while the adapter called the path-taking factory;
+  CarPlay sent `boolForKey:` to a frozen entitlement dictionary.
+- `1-23` preflighted the entitlement argument, but the same crash remained
+  because the path-taking factory reloaded the bundle's raw Info.plist.
+- `1-24` moved the failure to `objectForKey:ofClass:` on a mutable raw
+  dictionary, confirming that wrapping only the externally supplied arguments
+  cannot make the path-taking overload safe.
+- `1-23` reached the declaration path and logged an FPT declaration, but the
+  live CarPlay session hung and then hit the watchdog (`CarPlay` exited with
+  signal 6). A declaration log is therefore not evidence that the roster
+  object or policy update is valid.
+- `1-24` was installed after that watchdog and did not produce a clean,
+  independent CarPlay run; its diagnostics were still dominated by the prior
+  failed session. It is not a verified candidate.
+- `1-25` produced a new, definitive object-contract crash while CarPlay was
+  connecting:
+
+  ```text
+  -[<object> isHidden]: unrecognized selector sent to instance
+  DBIconModel isIconVisible: -> loadAllIcons -> DBDashboard handleConnect
+  ```
+
+  The dynamically subclassed `FBSApplicationInfo` supplied only
+  `-carPlayDeclaration`; Dashboard also expects the full `DBApplicationInfo`
+  contract (including `-isHidden`). It is therefore unsafe even when the
+  declaration factory itself returns successfully. The device was restored to
+  `1-13` immediately afterward.
+
+Do not retry `1-21` through `1-25` as-is. The next experiment must avoid both
+the path-taking factory's internal raw-property-list reload and a fabricated
+`FBSApplicationInfo` roster object. A valid insertion must be a real
+`DBApplicationInfo` (or an object with its complete private selector contract),
+then be verified against a live CarPlay process before any FPT roster entry is
+retained.
+
+### First successful DBApplicationInfo admission: `1-28`
+
+Build `0.1.4-1-28+debug` used the private Dashboard class that the live
+CarPlay process already uses. It created:
+
+```text
+[[DBApplicationInfo alloc] initWithApplicationProxy:
+    [LSApplicationProxy applicationProxyForIdentifier:@"ftel.rad.fptplay"]]
+```
+
+The candidate reported `class=DBApplicationInfo hidden=0 valid=1 installed=1`
+and a non-nil `carPlayDeclaration`. Adding that object to the process-local
+filtered library produced `34 -> 35` entries. CarPlay then requested FPT's
+policy and promoted it with `display=1 capable=1 supported=1 templateUI-off=1`.
+FPT Play appeared in the CarPlay app list, while the bundle remained untouched;
+the source path performs no LaunchServices or app-bundle write. No new CarPlay
+crash report appeared after this insertion. Launching and interacting with the
+new icon is the remaining runtime check before treating this as a release.
+
+### Accessory-daemon recovery checkpoint
+
+After a package downgrade and `sbreload`, `carkitd` can remain healthy while
+`user/501/com.apple.caraccessoryd` is stopped (`state=not running`, `runs=0`).
+In that state `CarPlay.app` cannot launch, even though the tweak has not
+crashed. Restarting only the accessory service with:
+
+```text
+launchctl kickstart -k user/501/com.apple.caraccessoryd
+```
+
+returned the service to `state=running`; a fresh unplug/replug handshake then
+brought CarPlay back. Record this separately from CarPlay-process crashes so a
+missing accessory handshake is not misattributed to the FPT admission code.
+
+After the `1-23`/`1-24`/`1-25` comparison, the device was explicitly restored
+to `0.1.4-1-13+debug`, resprung, and `caraccessoryd` was kickstarted again.
+The package query confirmed `1-13`; `caraccessoryd` was `state=running`, and
+the crash directory contained no report newer than the `1-25`
+`CarPlay-2026-08-14-140751.ips` failure. This is the current safe checkpoint.
+The package state is safe, but the CarPlay connection itself is not guaranteed
+after a userspace reboot: if `caraccessoryd` returns to `state=not running`,
+kickstart it and perform a fresh physical unplug/replug handshake.
+
 ## The runtime-only architecture
 
 The desired flow is:
