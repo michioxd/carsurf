@@ -99,11 +99,13 @@ The result is a useful boundary, not a ready-made implementation:
 The OSS evidence does **not** show that the iOS 18 declaration-factory method is
 also implemented or validated on iOS 26. What exists for iOS 26 is mostly
 transport/head-unit reverse engineering or generic tweak injection. Our
-`CRCarPlayAppDeclaration` + per-call `LSBundleInfoCachedValues` proxy remains an
-iOS 18.5 finding until a symbol-level probe is run on iOS 26. The next research
-step is therefore a version-gated observe-only probe: resolve the declaration
-factory and policy evaluator on each OS, log their class/selector/caller, and
-only enable the proxy on releases where the same object contract is confirmed.
+`CRCarPlayAppDeclaration` + per-call `LSBundleInfoCachedValues` proxy is a
+successful **research-branch experiment on iOS 18.5**, not the mechanism used by
+the current dual-app build. The current build still uses the on-disk helper
+patch. The next research step is therefore a version-gated observe-only probe:
+resolve the declaration factory and policy evaluator on each OS, log their
+class/selector/caller, and only enable the proxy on releases where the same
+object contract is confirmed.
 
 ## Reality ledger: methods already tested
 
