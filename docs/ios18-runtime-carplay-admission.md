@@ -34,6 +34,37 @@ cannot create a declaration for an app that CarKit never considered. The
 current comments and logs also show that CarKit no longer consults the
 `LSBundleProxy` entitlement getters for this initial roster on iOS 18.
 
+## Historical iOS 18 experiment already preserved
+
+The separate branch `research/fpt-play-runtime-admission` contains a more
+specific result from the FPT Play investigation. It should be treated as the
+starting point for the next implementation, not rediscovered from scratch:
+
+- On iOS 18.5, `+[CRCarPlayAppDeclaration
+  declarationForBundleIdentifier:info:entitlements:]` was observed in
+  SpringBoard building every declaration. The probe recorded 492 calls, with
+  66 genuine declarations and `nil` for ordinary apps.
+- The `entitlements` argument is an `LSBundleInfoCachedValues` object. CarKit
+  asks it for the admission key `SBStarkCapable` while building the declaration.
+- Re-running the original factory with a per-call `NSProxy` stand-in for that
+  one argument produced a valid declaration for an allowlisted app without
+  changing its bundle or signature.
+- The stand-in forwards every selector to the real object and only answers
+  `boolForKey:` / `objectForKey:...` lookups for `SBStarkCapable`, preserving the
+  exact BOOL-versus-object return type.
+- The experiment deliberately avoids swizzling `LSBundleInfoCachedValues` or
+  other hot CoreServices paths. An earlier attempt there caused the CarPlay
+  link to remain in an endless “connecting” retry loop.
+- CarPlay declarations were observed being built in SpringBoard; admitting
+  only in another process produced no useful dashboard result.
+
+This changes the status of the plan: the declaration producer and the
+entitlement argument are no longer unknown. The next work is to port that
+isolated factory/stand-in experiment into the current branch, add its runtime
+admission ledger, and then verify the scene launch path. The research branch is
+intentionally not merged because it was based on an earlier Portal layout and
+would remove current dual-app code if merged wholesale.
+
 ## The runtime-only architecture
 
 The desired flow is:
@@ -54,12 +85,16 @@ configuration.
 
 ## Where to instrument first
 
-### 1. Find the declaration producer
+### 1. Reproduce the declaration factory safely
 
-`CSCarKitPolicy.m` already swizzles `-[CRCarPlayAppDeclaration
-setBundleIdentifier:]` when verbose logging is enabled and records the first
-call stack. Enable verbose logging, reconnect CarPlay, and capture the stack
-when a genuine CarPlay app declaration is built:
+The preserved experiment identifies the primary selector:
+`+[CRCarPlayAppDeclaration declarationForBundleIdentifier:info:entitlements:]`.
+First reproduce it in observe-only mode and confirm that it still runs in
+SpringBoard on the target iOS 18 build. The existing
+`-[CRCarPlayAppDeclaration setBundleIdentifier:]` trace remains useful for
+capturing the caller stack, but it is no longer the discovery step.
+
+Enable verbose logging, reconnect CarPlay, and capture the declaration trace:
 
 ```text
 carsurf-logs -c
@@ -68,10 +103,10 @@ disconnect/reconnect CarPlay
 carsurf-logs
 ```
 
-The first declaration stack is the most valuable reverse-engineering artifact.
-The producer is likely an app-library/database builder or a declaration factory,
-not `CRCarPlayAppPolicyEvaluator` itself. Do not guess a class name before the
-stack trace identifies it.
+The factory result and process identity are the most valuable regression
+artifacts. Do not move the admission hook into `carkitd` or a global
+`LSBundleInfoCachedValues` swizzle; the preserved experiment showed that those
+hot paths can destabilize the CarPlay connection.
 
 For each class in that stack, record methods with:
 
@@ -85,9 +120,24 @@ returned collection or declaration object after the original method returns;
 do not replace a whole private database object unless its concrete class and
 type contract are known.
 
-### 2. Determine declaration requirements
+### 2. Keep the per-call entitlement stand-in narrow
 
-Trace a genuine CarPlay app and an ordinary app side by side. Log every
+The first implementation should retain the original factory and replace only
+the `entitlements` argument for an allowlisted bundle with a forwarding
+`NSProxy`. Log the selectors received by that stand-in and compare a genuine
+app with an ordinary app. The known admission key is `SBStarkCapable`; verify
+whether the target release still asks for only that key before adding any
+others. Preserve exact return types:
+
+- `boolForKey:` returns a raw `BOOL`.
+- `objectForKey:` and its typed variants return `@YES`.
+
+Do not synthesize a complete `CRCarPlayAppDeclaration` manually. The factory
+must continue to populate all fields CarKit expects. The stand-in should be
+used only when the original factory returned `nil`, and only for an enabled,
+non-native bundle.
+
+Then trace a genuine CarPlay app and an ordinary app side by side. Log every
 declaration property read by the evaluator and compare:
 
 - bundle identifier / application proxy
@@ -209,4 +259,3 @@ The runtime path is complete only when all of the following are true:
 - disable/re-enable and App Store update remove/recreate admission without
   patching the app;
 - native CarPlay apps remain unaffected.
-
