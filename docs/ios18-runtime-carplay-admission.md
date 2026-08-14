@@ -65,6 +65,46 @@ admission ledger, and then verify the scene launch path. The research branch is
 intentionally not merged because it was based on an earlier Portal layout and
 would remove current dual-app code if merged wholesale.
 
+## OSS survey: iOS 18 versus iOS 26
+
+The public-source search was deliberately limited to code or reverse-engineering
+that names CarPlay internals, rather than generic “CarPlay entitlement” advice.
+The result is a useful boundary, not a ready-made implementation:
+
+- The well-known open-source `CarPlayEnable` project is an iOS 14-era tweak. Its
+  contemporaneous documentation describes using unsupported apps through
+  CarPlay, and the linked source is `EthanArbuckle/carplay-cast`; public reports
+  also document that it was unstable and did not work reliably on later
+  releases. See the [source announcement and iOS 14 scope](https://www.idownloadblog.com/2021/02/11/carplayenable/)
+  and the [open-source repository reference](https://github.com/EthanArbuckle/carplay-cast).
+- Public tweak indexes still list CarBridge as non-working on iOS 16 in some
+  semi-jailbreak environments, with no iOS 18 implementation or declaration
+  factory published ([example compatibility ledger](https://github.com/Loy6410/ios16-tweaks)).
+  This is evidence that old tweaks are not a portable iOS 18 admission solution,
+  not proof that every build fails.
+- The strongest recent iOS 26 CarPlay OSS result is
+  [`mib2q-carplay-rgi`](https://github.com/luka-dev/mib2q-carplay-rgi). Its iOS
+  26.1 reverse engineering is about the head unit's second display (`altScreen`),
+  AirPlay feature negotiation, and stream type 111. It does not add an iPhone
+  application to CarKit's app roster and therefore does not replace the
+  `CRCarPlayAppDeclaration` admission hook.
+- A separate open-source iOS 26 toolkit advertises IPA/dylib injection, but its
+  README explicitly limits built-in tweaks to iOS 18.3.2 and describes iOS 26 as
+  supported only for file-manager and IPA-injector functions. It contains no
+  CarPlay declaration/policy implementation. See the
+  [`iDevice-Toolkit` compatibility statement](https://github.com/GeoSn0w/iDevice-Toolkit#-what-is-idevice-toolkit).
+
+### Version conclusion
+
+The OSS evidence does **not** show that the iOS 18 declaration-factory method is
+also implemented or validated on iOS 26. What exists for iOS 26 is mostly
+transport/head-unit reverse engineering or generic tweak injection. Our
+`CRCarPlayAppDeclaration` + per-call `LSBundleInfoCachedValues` proxy remains an
+iOS 18.5 finding until a symbol-level probe is run on iOS 26. The next research
+step is therefore a version-gated observe-only probe: resolve the declaration
+factory and policy evaluator on each OS, log their class/selector/caller, and
+only enable the proxy on releases where the same object contract is confirmed.
+
 ## Reality ledger: methods already tested
 
 This table records observed results from the prior sessions. “Proven” means it
