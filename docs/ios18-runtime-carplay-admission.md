@@ -423,6 +423,209 @@ Avoid global cache flushes until the declaration producer and cache owner are
 known; broad invalidation is a likely source of SpringBoard safe mode or
 CarPlay restarts.
 
+### Current iOS 18.5 enable/disable/uninstall synchronization checkpoint
+
+The dual-app build now has one observed state pipeline for the CarPlay
+dashboard, tested on the rootless iPhone 11 (iOS 18.5). The preference state,
+the in-memory `DBApplicationController` roster, and the icon-layout state are
+separate caches; updating only one of them is not enough.
+
+| Transition | Event/path used | Observed behavior |
+| --- | --- | --- |
+| Carsurf enable | `CSPrefsStore -setApp:enabled:` writes the plist, posts `com.pavunato.carsurf/reload`, and posts `com.pavunato.carsurf/application-library-change` | CarPlay invalidates its FBS library, rebuilds the roster, and logs `CarPlay Dashboard loaded newly enabled app ...`. |
+| Carsurf disable | Same two preference notifications | CarPlay computes the previous/current enabled-ID diff, calls `_removeApplicationWithBundleIdentifier:`, and logs `CarPlay Dashboard removed disabled app ...`. |
+| Installed native app | Apple’s own LaunchServices/FBS path | Native CarPlay apps appear without a Carsurf install swizzle. The old `applicationsDidInstall:` swizzle was removed in build 59 because it was redundant and added risk. |
+| Uninstall | `applicationsDidUninstall:` when FBS supplies the bundle, plus a 0.5-second LaunchServices reconciliation monitor in SpringBoard and CarPlay | The injected row is removed, the ID is blocked from re-admission, and SpringBoard prunes its saved preference entry. The monitor exists because non-native/injected apps are not guaranteed to be present in the FBS uninstall payload. |
+
+The current implementation also filters the removed IDs from icon-layout fetch
+and set-order state. This was required because removing an app from
+`DBApplicationController` alone did not always remove an already-persisted
+CarPlay home-screen icon. On some vehicle sessions the icon-layout provider is
+unavailable, so the service fetch/filter/write-back fallback is used instead.
+
+Device evidence from the current log includes:
+
+```text
+18:04:56 Carsurf enable/disable changed — requesting application-library refresh
+18:04:57 CarPlay Dashboard loaded newly enabled app com.opa334.Dopamine.WQX993NE3M
+18:12:38 CarPlay Dashboard removed disabled app com.opa334.Dopamine.WQX993NE3M
+18:16:22 FBS application uninstall callback ... player.video.ios.stream.file
+18:16:22 CarPlay Dashboard removed uninstalled app player.video.ios.stream.file
+18:16:22 pruned 1 uninstalled app preference entry: player.video.ios.stream.file
+18:24:40 CarPlay Dashboard loaded newly enabled app com.garena.gamecenter
+18:26:37 FBS application uninstall callback ... com.garena.gamecenter
+18:26:37 CarPlay Dashboard removed uninstalled app com.garena.gamecenter
+18:26:38 pruned 1 uninstalled app preference entry: com.garena.gamecenter
+```
+
+Build `0.1.4-1-64+debug` contains the icon-layout stale-ID filtering, persistent
+removed-ID set, additional icon identifier selectors, stale-proxy protection,
+and vehicle-aware `CRSIconLayoutService` reset/fetch/write-back using
+`resetIconStateForVehicleID:` rather than the unsupported zero-argument reset.
+Build `0.1.4-1-63+debug` was the prior stale-proxy checkpoint. Build 64 was
+installed/resprung on the same device. The event logs prove the preference,
+roster, and uninstall cleanup paths; a visual check after each transition is
+still required because CarPlay may keep a rendered home-screen snapshot until
+its icon-layout state is fetched again.
+
+The post-build-64 log also records the expected event fan-out for a synthetic
+enable/disable and for an uninstall of an injected app:
+
+```text
+18:29:51 Carsurf enable/disable changed — requesting application-library refresh
+18:29:51 CarPlay Dashboard removed disabled app com.opa334.Dopamine.WQX993NE3M
+```
+
+At that moment CarPlay reported `icon-layout service has no active vehicle
+connections`, so the vehicle-specific icon-state read/filter/write-back could
+not be observed in that run. This is a verification limitation, not evidence
+that the roster refresh failed. A connected CarPlay session must be present
+when testing the persisted home-screen icon state. The latest completed
+transition evidence before that run remains:
+
+```text
+18:24:40 CarPlay Dashboard loaded newly enabled app com.garena.gamecenter
+18:26:37 FBS application uninstall callback ... com.garena.gamecenter
+18:26:37 CarPlay Dashboard removed uninstalled app com.garena.gamecenter
+18:26:38 pruned 1 uninstalled app preference entry: com.garena.gamecenter
+```
+
+No `applicationsDidInstall:` swizzle is active; installed-app discovery is
+left to the native LaunchServices/FBS path. Carsurf's own enable/disable
+notification is the only synthetic admission event.
+
+Build `0.1.4-1-65+debug` adds notification coalescing. Because one preference
+write emits both `com.pavunato.carsurf/reload` and
+`com.pavunato.carsurf/application-library-change`, the CarPlay process now
+allows only one delayed refresh per transaction. The post-respring device log
+verified this behavior:
+
+```text
+18:34:04 Carsurf enable/disable changed — requesting application-library refresh
+18:34:04 dashboard refresh notification coalesced
+18:34:04 CarPlay Dashboard removed disabled app com.apple.Translate
+18:34:04 CarPlay Dashboard roster refresh end added=0 removed=1
+```
+
+This removes the duplicate roster rebuild that was present in build 64. Build
+65 also resprung the iPhone 11 cleanly. The external icon-layout portion still
+needs a live vehicle connection; this device session continued to report no
+active `CRSIconLayoutService` vehicle connection.
+
+Build `0.1.4-1-66+debug` moves icon-layout refresh handling into both CarPlay
+UI processes. `CarPlay` continues to own `DBApplicationController` roster
+mutation, while `CarPlayTemplateUIHost` now receives the same enable/disable
+diff and runs its own `CRSIconLayoutService` refresh/filter path. This matters
+because the icon-layout service and its persisted vehicle state are exposed in
+the host process even when the dashboard controller is in `CarPlay`.
+
+The post-respring build-66 log confirms both processes receive the event and
+the host executes the refresh:
+
+```text
+18:37:06 CarPlay Carsurf enable/disable changed — requesting application-library refresh
+18:37:06 CarPlayTemplateUIHost Carsurf enable/disable changed — requesting application-library refresh
+18:37:06 CarPlayTemplateUIHost dashboard icon refresh begin
+18:37:06 CarPlayTemplateUIHost CarPlay icon-layout service has no active vehicle connections
+18:37:07 CarPlay Dashboard loaded newly enabled app com.apple.freeform
+```
+
+The vehicle connection was still absent, so this proves process ownership and
+event delivery but not the final rendered icon state. The next connected
+vehicle test should look for `active vehicle count`, `filtered stale icon`, or
+`icon-layout filtered state written` in the host log.
+
+Build `0.1.4-1-67+debug` fixes the corresponding host-process baseline update:
+after every roster diff, both UI processes now remember the current enabled-ID
+set before the host returns from its icon-only path. The post-respring log
+showed a later disable reaching both layers:
+
+```text
+18:39:40 CarPlay Dashboard loaded newly enabled app com.apple.AppStore
+18:39:43 CarPlay Dashboard removed disabled app com.apple.freeform
+18:39:43 CarPlayTemplateUIHost dashboard icon refresh begin
+18:39:43 CarPlayTemplateUIHost CarPlay icon-layout service has no active vehicle connections
+```
+
+This verifies the enable/disable state transition and host refresh path after
+the baseline fix. A live vehicle is still required to observe the final
+filtered state write and the rendered icon disappearing from the head unit.
+
+Build `0.1.4-1-68+debug` extends the delayed
+`applicationsDidUninstall:` cleanup to `CarPlayTemplateUIHost` as well as
+`CarPlay`. This keeps the host's persisted icon state synchronized immediately
+after an uninstall callback instead of waiting for the periodic LaunchServices
+monitor. The package was installed and resprung cleanly on the iPhone 11; the
+same session showed the host executing its icon refresh alongside the CarPlay
+roster refresh, with no active vehicle connection available for final state
+write verification.
+
+Build `0.1.4-1-69+debug` persists deliberate disable tombstones under the
+`dashboardDisabled` preference key. On a clean respring with two disabled
+entries present, all three relevant processes restored the same set before
+their hooks ran:
+
+```text
+18:47:07 SpringBoard restored 2 persisted disabled-dashboard tombstone(s)
+18:47:07 CarPlay restored 2 persisted disabled-dashboard tombstone(s)
+18:47:20 CarPlayTemplateUIHost restored 2 persisted disabled-dashboard tombstone(s)
+```
+
+This closes the cold-start gap: the host can filter stale disabled icons even
+when it starts before a live dashboard controller or vehicle connection exists.
+Re-enabling removes the tombstone, and SpringBoard's uninstall prune removes
+it if the app is gone from LaunchServices.
+
+The same build-69 session then handled further disables without a respring:
+
+```text
+18:47:56 CarPlay Dashboard removed disabled app com.apple.stocks
+18:47:56 CarPlayTemplateUIHost CarPlay icon-layout service has no active vehicle connections
+18:48:00 CarPlay Dashboard removed disabled app com.apple.mobiletimer
+18:48:00 CarPlayTemplateUIHost CarPlay icon-layout service has no active vehicle connections
+```
+
+Build `0.1.4-1-73+debug` added live-service diagnostics. With the existing
+CarPlay UI processes still running, the device logged:
+
+```text
+18:55:26 CarPlay icon-layout service initialized class=CRSIconLayoutService
+18:55:37 CarPlay icon-layout service initialized class=CRSIconLayoutService
+```
+
+No `listener:didReceiveConnection:withContext:` callback or active vehicle ID
+followed. Therefore the service is being constructed, but this session has not
+provided a vehicle connection object to that service; the fallback instance
+tracking is in place for the next live refresh event.
+
+Builds `0.1.4-1-75` through `0.1.4-1-80+debug` were tested without unplugging the
+physical CarPlay session. The service instance is now retained and the
+`CarPlayTemplateUIHost` process confirms all four icon-layout selectors are
+hooked. Its `CRSIconLayoutService.connections` is an empty `NSHashTable`, and
+the private connection-queue and controller hooks receive no connection or
+vehicle identifier. The repeated in-vehicle policy requests prove the head unit
+is connected; they do not imply that the icon-layout service owns that session.
+Consequently, enable/disable/uninstall roster synchronization is verified at
+the `DBApplicationController`/LaunchServices layer, while direct persisted
+vehicle icon-state write-back remains unverified on iOS 18.5.
+
+Build `0.1.4-1-82+debug` adds the missing `SBSApplicationCarPlayService` path.
+On this iOS 18.5 device the class exposes the actual persisted-state methods:
+
+```text
+-fetchIconStateForVehicleId:withCompletion:
+-resetIconStateForVehicleId:
+-setIconState:hiddenIcons:forVehicleId:
+```
+
+The tweak now filters fetch results, filters every write, and performs a
+reset/fetch/write reconciliation after an enable, disable, or uninstall event.
+Because SpringBoardServices is lazy, the hooks retry after framework loading;
+the CarPlay process confirmed all three selectors installed at 19:18:58. The
+remaining verification step is a fresh `carkitd` instance: the physical
+session has stayed connected and that daemon has not restarted since before
+build 82, so no daemon-side SBS state callback has yet been observed.
+
 ## What must not be done
 
 - Do not re-sign or rewrite the target app as a fallback inside the runtime

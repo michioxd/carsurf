@@ -62,11 +62,24 @@ typedef NS_ENUM(NSInteger, CSIdiomMode) {
 /// Bundle identifiers the user has opted in to bridging.
 @property (nonatomic, readonly, copy) NSArray<NSString *> *enabledBundleIdentifiers;
 
+/// Carsurf-managed bundle identifiers deliberately disabled on the CarPlay
+/// dashboard. This small persistent tombstone set lets the icon-layout host
+/// filter stale icons after it restarts before it can query the dashboard
+/// controller.
+@property (nonatomic, readonly, copy) NSArray<NSString *> *dashboardDisabledBundleIdentifiers;
+
 - (BOOL)isBundleEnabled:(nullable NSString *)bundleIdentifier;
 - (CSAppOptions *)optionsForBundle:(NSString *)bundleIdentifier;
 
 /// Re-reads from disk. Called automatically on the change notification.
 - (void)reload;
+
+/// Removes per-app preference entries whose bundle identifiers are no longer
+/// present in LaunchServices. This is intentionally a no-op outside
+/// SpringBoard, where the installed-app database is authoritative. Call this
+/// once during SpringBoard startup so an uninstall followed by a respring does
+/// not leave a stale enabled app in the saved plist.
+- (void)pruneMissingApplications;
 
 /// Posted by the prefs bundle after a write.
 @property (class, nonatomic, readonly) NSString *changeNotificationName;

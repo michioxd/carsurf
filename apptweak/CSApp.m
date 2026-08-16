@@ -24,7 +24,11 @@ static BOOL CSProcessIsBridgeableApp(void) {
     NSString *bundleID = main.bundleIdentifier;
     if (bundleID.length == 0) return NO;
 
-    // System UI processes get the other dylib, not this one.
+    // SpringBoard and the CarPlay hosts get the system-side dylib, not this
+    // app bridge. Preferences is deliberately not excluded: when the user
+    // enables it, CarPlay must receive the same plain-window bridge as any
+    // other admitted app; all bridge/keyboard/trait changes remain gated on a
+    // live CarPlay scene, so ordinary phone Settings is left alone.
     static NSSet *excluded;
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -32,7 +36,6 @@ static BOOL CSProcessIsBridgeableApp(void) {
             @"com.apple.springboard",
             @"com.apple.CarPlayApp",
             @"com.apple.CarPlayTemplateUIHost",
-            @"com.apple.Preferences",
         ]];
     });
     if ([excluded containsObject:bundleID.lowercaseString] ||
@@ -102,7 +105,13 @@ static BOOL CSAppHasNativeCarPlayCapability(void) {
 __attribute__((constructor))
 static void CSAppInit(void) {
     @autoreleasepool {
-        if (!CSProcessIsBridgeableApp()) return;
+        CSTimingLog("app init begin process=%s bundle=%s",
+                    NSProcessInfo.processInfo.processName.UTF8String,
+                    NSBundle.mainBundle.bundleIdentifier.UTF8String ?: "(none)");
+        if (!CSProcessIsBridgeableApp()) {
+            CSTimingLog("app init end not-bridgeable");
+            return;
+        }
 
         NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
         CSConfig *config = CSConfig.sharedConfig;
@@ -114,8 +123,14 @@ static void CSAppInit(void) {
         CSLog("loaded into %s (enabled=%d, allowlisted=%d)", bundleID.UTF8String,
                 config.isEnabled, [config isBundleEnabled:bundleID]);
 
-        if (!config.isEnabled) return;
-        if (![config isBundleEnabled:bundleID]) return;
+        if (!config.isEnabled) {
+            CSTimingLog("app init end globally-disabled");
+            return;
+        }
+        if (![config isBundleEnabled:bundleID]) {
+            CSTimingLog("app init end not-allowlisted bundle=%s", bundleID.UTF8String);
+            return;
+        }
 
         BOOL native = CSAppHasNativeCarPlayCapability();
 
@@ -144,5 +159,6 @@ static void CSAppInit(void) {
         CSInstallTraitOverrides();
         CSInstallFullscreenLayoutSupport();
         CSInstallKeyboardSupport();
+        CSTimingLog("app init end bridge-installed bundle=%s", bundleID.UTF8String);
     }
 }

@@ -22,3 +22,6 @@ packages/*.deb
 # debugging session (screen recordings, ad-hoc screenshots).
 *.mov
 Main-VideoStream-*.png
+
+# fnm (node version manager) per-shell temp file
+.fnm_multishells

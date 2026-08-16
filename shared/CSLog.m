@@ -5,6 +5,7 @@
 #import <stdarg.h>
 #import <sys/stat.h>
 #import <unistd.h>
+#import <mach/mach_time.h>
 
 // iOS ships no `log` binary, so os_log output is effectively unreadable on a
 // device without extra tooling (and on zsh, `log` is a shell built-in that
@@ -130,5 +131,27 @@ void CSLogImpl(const char *tag, const char *fmt, ...) {
         free(line);
     }
 
+    free(body);
+}
+
+void CSLogTimingImpl(const char *tag, const char *fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    char *body = NULL;
+    if (vasprintf(&body, fmt, args) < 0) body = NULL;
+    va_end(args);
+    if (!body) return;
+
+    static uint64_t startTicks;
+    static mach_timebase_info_data_t timebase;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        startTicks = mach_absolute_time();
+        mach_timebase_info(&timebase);
+    });
+    uint64_t delta = mach_absolute_time() - startTicks;
+    double seconds = ((double)delta * (double)timebase.numer /
+                      (double)timebase.denom) / 1000000000.0;
+    CSLogImpl(tag, "TIMING +%.3fs %s", seconds, body);
     free(body);
 }

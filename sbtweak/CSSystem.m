@@ -16,6 +16,7 @@ static void CSInstallCarPlayHooks(void) {
     static BOOL installed = NO;
     if (installed) return;
     installed = YES;
+    CSTimingLog("hook installation begin");
 
     // iOS 16/17 admission: DashBoard's _proxyPassesInclusionFilter asks
     // LSBundleProxy for entitlements, so an app can be admitted at runtime with no
@@ -46,6 +47,7 @@ static void CSInstallCarPlayHooks(void) {
     CSInstallCarKitPolicyHook();
     CSInstallEntitlementSpoof();
     CSInstallAppListFilter();
+    CSTimingLog("hook installation end");
 }
 
 /// Fires for every image the process maps. CarPlaySupport is loaded lazily, well
@@ -53,8 +55,9 @@ static void CSInstallCarPlayHooks(void) {
 static void CSImageLoaded(const struct mach_header *header) {
     // CarKit on iOS 18, CarPlaySupport on older releases. Either arriving is the
     // cue to install.
-    if (!objc_getClass("CRCarPlayAppPolicyEvaluator") && !objc_getClass("CARApplication")) return;
-    CSLog("CarPlay framework is now loaded — installing hooks");
+    if (!objc_getClass("CRCarPlayAppPolicyEvaluator") && !objc_getClass("CARApplication") &&
+        !objc_getClass("CRSIconLayoutService") && !objc_getClass("CRSIconLayoutController")) return;
+    CSTimingLog("CarPlay framework image loaded — installing hooks");
     CSInstallCarPlayHooks();
 }
 
@@ -63,7 +66,14 @@ static void CSSystemInit(void) {
     @autoreleasepool {
         CSConfig *config = CSConfig.sharedConfig;
 
-        CSLog("loaded into %s (enabled=%d, %lu app(s) allowlisted)",
+        // LaunchServices has the authoritative installed-app roster in
+        // SpringBoard. Prune entries left behind by an uninstall before any
+        // CarPlay roster admission or relay mirroring reads the config.
+        if (CSIsSpringBoard()) {
+            [config pruneMissingApplications];
+        }
+
+        CSTimingLog("system init begin process=%s enabled=%d allowlisted=%lu",
                 NSProcessInfo.processInfo.processName.UTF8String,
                 config.isEnabled,
                 (unsigned long)config.enabledBundleIdentifiers.count);
@@ -80,10 +90,12 @@ static void CSSystemInit(void) {
             CSStartRelay();
         }
 
-        if (objc_getClass("CRCarPlayAppPolicyEvaluator") || objc_getClass("CARApplication")) {
+        if (objc_getClass("CRCarPlayAppPolicyEvaluator") || objc_getClass("CARApplication") ||
+            objc_getClass("CRSIconLayoutService") || objc_getClass("CRSIconLayoutController")) {
             CSInstallCarPlayHooks();
         } else {
             objc_addLoadImageFunc(CSImageLoaded);
         }
+        CSTimingLog("system init end");
     }
 }

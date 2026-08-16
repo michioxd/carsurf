@@ -1,0 +1,998 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CarSurf — Product Roadmap (Maze Map)</title>
+<style>
+:root{
+  --bg:#0e0e11; --bg2:#141419; --panel:#1a1a21; --panel2:#20202a;
+  --ink:#e8e6e3; --dim:#9b98a3; --faint:#6b6875;
+  --amber:#f5b942; --amber-dim:#8a6a24; --line:#2a2a34;
+  --green:#4ecb71; --red:#ff5d5d; --blue:#58a6ff; --purple:#b08bff;
+  --mono:"SF Mono","JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font:14px/1.6 var(--sans);padding-bottom:120px}
+a{color:var(--amber);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.9em;background:var(--bg2);border:1px solid var(--line);border-radius:4px;padding:0 .3em;color:#d8d5ee}
+header.hero{max-width:1080px;margin:0 auto;padding:64px 24px 40px}
+.kicker{font:11px var(--mono);letter-spacing:.22em;text-transform:uppercase;color:var(--amber)}
+h1{font-size:clamp(28px,4.5vw,44px);font-weight:700;letter-spacing:-.02em;margin:14px 0 8px}
+.sub{color:var(--dim);max-width:64ch}
+.sig{display:flex;flex-wrap:wrap;gap:18px;margin-top:26px;font:12px var(--mono);color:var(--dim)}
+.sig b{color:var(--ink);font-weight:600}
+.maze{color:var(--dim);font:12px var(--mono);margin-top:22px;line-height:1.9;border-left:3px solid var(--amber);padding-left:14px;max-width:70ch}
+nav.rail{position:sticky;top:0;z-index:50;background:rgba(14,14,17,.88);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+nav.rail .inner{max-width:1080px;margin:0 auto;display:flex;gap:6px;overflow-x:auto;padding:10px 24px;font:12px var(--mono)}
+nav.rail a{color:var(--dim);padding:4px 10px;border-radius:20px;border:1px solid transparent;white-space:nowrap}
+nav.rail a:hover{color:var(--ink);border-color:var(--line);text-decoration:none}
+.legend{max-width:1080px;margin:44px auto 8px;padding:0 24px}
+.legend h2{font:12px var(--mono);letter-spacing:.2em;text-transform:uppercase;color:var(--faint);margin-bottom:12px}
+.legend ul{display:flex;flex-wrap:wrap;gap:8px;list-style:none}
+.legend li{display:flex;align-items:center;gap:7px;font:12px var(--mono);color:var(--dim);background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:5px 11px}
+.dot{width:9px;height:9px;border-radius:50%;flex:none}
+main{max-width:1080px;margin:0 auto;padding:0 24px}
+section.day{display:grid;grid-template-columns:150px 1fr;gap:26px;padding:34px 0;border-top:1px solid var(--line)}
+.datecol{position:relative}
+.datecol .date{position:sticky;top:74px;font:14px var(--mono);font-weight:700}
+.datecol .dow{display:block;font:10px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin-top:2px}
+.datecol .range{display:block;font:10px var(--mono);color:var(--faint);margin-top:6px}
+.phase{display:inline-block;font:10px var(--mono);letter-spacing:.14em;text-transform:uppercase;border:1px solid var(--line);border-radius:20px;padding:2px 10px;margin-top:10px;color:var(--blue)}
+.phase.portal{color:var(--purple);border-color:var(--purple)}
+.phase.live{color:var(--green);border-color:var(--green)}
+.phase.patch{color:var(--amber)}
+.phase.tool{color:var(--dim)}
+.phase.dev{color:var(--blue)}
+body .content h3{font-size:19px;font-weight:650;letter-spacing:-.01em;margin:2px 0 6px}
+body .content h4{font-size:13px;font-weight:650;margin:26px 0 8px;letter-spacing:.02em;color:var(--amber);font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.14em}
+.entry{position:relative;padding-left:20px;margin:14px 0}
+.entry::before{content:"";position:absolute;left:0;top:7px;width:9px;height:9px;border-radius:50%;background:var(--dim)}
+.entry.win::before{background:var(--green)}
+.entry.wall::before{background:var(--red)}
+.entry.warn::before{background:var(--amber)}
+.entry.rule::before{background:var(--purple)}
+.entry.crash::before{background:var(--red);box-shadow:0 0 8px var(--red)}
+.entry p{color:var(--dim)}
+.entry p b{color:var(--ink);font-weight:600}
+.entry .meta{font:11px var(--mono);color:var(--faint);display:block;margin-bottom:2px}
+.entry .meta code{font-size:inherit}
+.entry strong{color:var(--ink)}
+ul.tight{list-style:none;margin:8px 0 0}
+ul.tight li{padding:3px 0 3px 18px;position:relative;color:var(--dim);font-size:13px}
+ul.tight li::before{content:"▸";position:absolute;left:0;color:var(--amber-dim)}
+ul.tight li b{color:var(--ink)}
+.hooktable{width:100%;border-collapse:collapse;font:12px var(--mono);margin:10px 0 6px}
+.hooktable th{text-align:left;color:var(--faint);font-weight:600;border-bottom:1px solid var(--line);padding:7px 10px;letter-spacing:.1em;text-transform:uppercase;font-size:10px}
+.hooktable td{padding:7px 10px;border-bottom:1px solid var(--bg2);vertical-align:top;color:var(--dim)}
+.hooktable td:first-child{color:var(--ink);white-space:nowrap}
+.hooktable td b{color:var(--ink);font-weight:600}
+.hooktable tr:hover td{background:var(--bg2)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:16px 0}
+.panel.wall{border-color:#4a2020;background:#1c1315}
+.panel.wall h4{color:var(--red)}
+.panel.win{border-color:#1e4a2c;background:#131c16}
+.panel.win h4{color:var(--green)}
+.panel h4{margin-top:0}
+.panel p{color:var(--dim);font-size:13px;margin-top:4px}
+.panel p b{color:var(--ink)}
+.num{font:700 15px var(--mono);color:var(--red)}
+footer{max-width:1080px;margin:60px auto 0;padding:0 24px;border-top:1px solid var(--line);padding-top:28px;font:11px var(--mono);color:var(--faint)}
+.maproot{background:var(--panel2);border:1px solid var(--amber-dim);border-radius:12px;padding:14px 20px;margin-bottom:16px}
+.maproot h4{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.14em;color:var(--amber);margin-bottom:4px}
+.maproot p{color:var(--dim);font:12px var(--mono)}
+.mapgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.mapbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.mapbox h4{font:600 12px var(--mono);text-transform:uppercase;letter-spacing:.14em;margin-bottom:10px;color:var(--amber);border-bottom:1px solid var(--bg2);padding-bottom:8px}
+.mapbox h4 .arrow{color:var(--faint)}
+.mmtree{list-style:none;font:12px var(--mono)}
+.mmtree li{padding:3px 0 3px 16px;position:relative;color:var(--dim)}
+.mmtree li::before{content:"▸";position:absolute;left:0;color:var(--amber-dim)}
+.mmtree li b{color:var(--ink)}
+.mmtree li.win::before{color:var(--green)}
+.mmtree li.wall::before{color:var(--red)}
+.mmtree li.open::before{color:var(--blue)}
+.mmtree li.rule::before{color:var(--purple)}
+.mmtree ul{margin-left:14px;border-left:1px solid var(--line);padding-left:6px}
+.mmtree li.layer{color:var(--amber);font-weight:700;margin-top:8px;letter-spacing:.02em}
+.mmtree li.layer::before{color:var(--amber)}
+.mmtree li.cls{color:var(--ink);font-weight:650;margin-top:4px}
+.mmtree li.cls::before{color:var(--blue)}
+.mmtree li.cls .pkg{color:var(--faint);font-weight:400}
+.mmtree li.hook{color:var(--dim)}
+.mmtree li.hook::before{color:var(--faint)}
+.mmtree li.hook code{font-size:11px;color:#d8d5ee}
+.mmtree li.hook b{color:var(--ink)}
+.mmtree li.hook .loc{color:var(--faint);font-size:11px;font-style:italic;white-space:nowrap}
+.mmtree li.hook .tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:6px;color:var(--green)}
+.mmgraph{position:relative;background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:720px}
+.mmgraph svg{display:block;margin:0}
+.mmgraph .mmedge{fill:none;stroke-linecap:round}
+.mmgraph .mmnode{cursor:pointer}
+.mmgraph .mmnode .mbbox{stroke-width:1.4;transition:stroke .12s,filter .12s}
+.mmgraph .mmnode:hover .mbbox{stroke:var(--amber);filter:drop-shadow(0 0 6px rgba(245,185,66,.28))}
+.mmgraph .mmnode text{user-select:none}
+.mmgraph .mmin{fill:var(--faint)}
+.mmlegend{display:flex;flex-wrap:wrap;gap:14px;align-items:center;font:11px var(--mono);color:var(--dim);padding:10px 14px;border-bottom:1px solid var(--bg2)}
+.mmlegend .lg{display:inline-flex;align-items:center;gap:6px}
+.mmlegend .sw{width:10px;height:10px;border-radius:3px;flex:none}
+.mmlegend .bd{width:8px;height:8px;border-radius:50%;flex:none}
+.mmdetail{border-top:1px solid var(--bg2);padding:16px 18px;background:var(--bg);font:12px var(--mono);min-height:70px}
+.mmdetail h5{font:600 12px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--amber);margin-bottom:6px}
+.mmdetail .dloc{color:var(--faint);font-size:11px;margin-bottom:8px}
+.mmdetail .drow{display:flex;gap:8px;align-items:baseline;margin:6px 0}
+.mmdetail .drow .dlab{font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase;border-radius:4px;padding:1px 6px;flex:none}
+.mmdetail .drow .dlab.why{color:var(--blue);border:1px solid var(--blue)}
+.mmdetail .drow .dlab.fail{color:var(--red);border:1px solid var(--red)}
+.mmdetail .drow .dlab.fix{color:var(--green);border:1px solid var(--green)}
+.mmdetail .drow p{color:var(--dim)}
+.mmdetail .drow p b{color:var(--ink)}
+.mmempty{color:var(--faint);font:12px var(--mono)}
+.hbranch{display:block}
+.hbranch>summary{list-style:none;cursor:pointer;display:flex;align-items:baseline;gap:7px;padding:3px 6px 3px 0;border-radius:6px;transition:background .12s}
+.hbranch>summary::-webkit-details-marker{display:none}
+.hbranch>summary::marker{content:""}
+.hbranch>summary:hover{background:var(--bg2)}
+.hbranch>summary .chev{width:0;height:0;border-left:5px solid var(--amber-dim);border-top:4px solid transparent;border-bottom:4px solid transparent;flex:none;align-self:center;transition:transform .15s}
+.hbranch[open]>summary .chev{transform:rotate(90deg)}
+.hbranch>summary.layer{color:var(--amber);font-weight:700;letter-spacing:.02em}
+.hbranch>summary.cls{color:var(--ink);font-weight:650}
+.hbranch>summary .pkg{color:var(--faint);font-weight:400}
+li.hook{padding:2px 0;position:relative;color:var(--dim)}
+li.hook code{font-size:11px;color:#d8d5ee}
+li.hook b{color:var(--ink)}
+li.hook .loc{color:var(--faint);font-size:11px;font-style:italic;white-space:nowrap}
+li.hook .tag{font-size:10px;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);border-radius:4px;padding:0 5px;margin-left:6px;color:var(--green)}
+.mmtools{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+.mmbtn{font:11px var(--mono);color:var(--dim);background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:5px 12px;cursor:pointer;transition:color .12s,border-color .12s}
+.mmbtn:hover{color:var(--ink);border-color:var(--amber-dim)}
+.mmcount{font:10px var(--mono);color:var(--faint)}
+.mmhint{font:10px var(--mono);color:var(--faint);margin-left:auto}
+.hbranch>summary.hook{color:var(--dim);font-weight:400;cursor:pointer}
+.hbranch>summary.hook code{color:#d8d5ee}
+.hbranch>summary.hook .loc{color:var(--faint);font-size:11px;font-style:italic;white-space:nowrap}
+.hbranch>summary.hook:hover{background:var(--bg2)}
+li.hmeta{padding:3px 0 3px 2px;color:var(--dim);font-size:12px}
+li.hmeta .hlab{display:inline-block;font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase;border-radius:4px;padding:1px 6px;margin-right:7px;vertical-align:1px;flex:none}
+li.hmeta .hlab.why{color:var(--blue);border:1px solid var(--blue)}
+li.hmeta .hlab.fail{color:var(--red);border:1px solid var(--red)}
+li.hmeta .hlab.fix{color:var(--green);border:1px solid var(--green)}
+li.hmeta code{font-size:11px;color:#d8d5ee}
+li.hmeta b{color:var(--ink)}
+@media (max-width:760px){
+  section.day{grid-template-columns:1fr;gap:6px}
+  .datecol .date{position:static}
+  .hooktable td:first-child{white-space:normal}
+}
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="kicker">CarSurf · Product Log</div>
+  <h1>Lost in the maze, looking for the way out.</h1>
+  <p class="sub">Every session, every hook, every crash, every wall — and every comeback — from the first CarPlay session to the live CarPlay icon sync. Sorted by date, so all progress is visible.</p>
+  <div class="sig">
+    <span>Owner <b>tonyorp</b></span>
+    <span>Repo <b>~/Documents/VipTony/jail-tweak/carsurf</b></span>
+    <span>Devices <b>jailbroken-iphone-11</b> · iOS 18.5 (192.168.6.34) &amp; <b>iphone-10-roothide-16.7.12</b> · iPhone X (192.168.6.11)</span>
+    <span>Log span <b>2026-08-11 → 2026-08-15</b></span>
+  </div>
+  <p class="maze">The maze: get any app's icon onto the CarPlay dashboard and sync its enable/disable <b>live</b>, without crashing CarPlay, without emptying the Customize list, and — eventually — without touching the on-disk app at all. The path so far: on-disk patch era ▸ dual-app portal ▸ live-dashboard sync ▸ runtime admission (the clean exit). Walls behind us: mixed-signing, LaunchServices brokering, trustcache EXC_GUARD, in-place overwrite SIGKILL, the 11-crash PAC loop, the empty Customize. Comebacks: every single day.</p>
+</header>
+
+<nav class="rail">
+  <div class="inner">
+    <a href="#map">Map</a>
+    <a href="#log">Log</a>
+    <a href="#hooks">Hooks</a>
+    <a href="#crashes">Crashes</a>
+    <a href="#walls">Walls</a>
+    <a href="#wayout">Way out</a>
+    <a href="#sessions">Sessions</a>
+    <a href="#errata">Errata</a>
+  </div>
+</nav>
+
+<div class="legend">
+  <h2>Legend</h2>
+  <ul>
+    <li><span class="dot" style="background:var(--green)"></span> win</li>
+    <li><span class="dot" style="background:var(--red)"></span> wall / crash</li>
+    <li><span class="dot" style="background:var(--amber)"></span> warning</li>
+    <li><span class="dot" style="background:var(--purple)"></span> rule</li>
+    <li><span class="dot" style="background:var(--dim)"></span> note</li>
+  </ul>
+</div>
+
+<main>
+
+  <!-- MINDMAP -->
+  <section id="map" style="padding:48px 0 8px">
+    <div class="kicker" style="margin-bottom:6px">Trace map · how to follow the maze</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">The maze in one picture</h2>
+    <p class="sub" style="max-width:76ch">Read top-down: what each track was trying to do, the wall it hit, and where it lives today. Everything below is expanded with dates and sources in the Log.</p>
+
+    <div class="maproot" style="margin-top:18px">
+      <h4>CarSurf · one problem</h4>
+      <p>Enable/disable an app in the CarSurf Settings panel → its icon appears/disappears on the CarPlay dashboard <b>live</b>, with no crash, no unplug/replug, and the Customize list stays full.</p>
+    </div>
+
+    <div class="mapgrid">
+      <div class="mapbox">
+        <h4><span class="arrow">▸</span> Track A · On-disk patch <span style="color:var(--faint)">(08-11)</span></h4>
+        <ul class="mmtree">
+          <li>Patch the real app via SSH: <b>SBStarkCapable</b> + scene keys, ad-hoc sign</li>
+          <li class="wall">✖ <b>Mixed-signing crash</b> — platform-exec vs non-platform Widevine</li>
+          <li class="win">✔ Sign every embedded framework + <b>fresh inode</b> (write-then-mv)</li>
+          <li class="win">→ First real dashboard app: <b>YouTube</b></li>
+          <li class="open">Still the fallback path. Killed by any App Store update.</li>
+        </ul>
+      </div>
+
+      <div class="mapbox">
+        <h4><span class="arrow">▸</span> Track B · Runtime admission <span style="color:var(--faint)">(08-13)</span></h4>
+        <ul class="mmtree">
+          <li>Answer <b>CRCarPlayAppDeclaration</b> factories in memory</li>
+          <li>Tag <b>LSBundleProxy</b> / <b>LSBundleInfoCachedValues</b> so capability keys resolve</li>
+          <li class="win">→ Proven reachable (docs/ios18-runtime-carplay-admission.md)</li>
+          <li class="open">The clean exit: survives App Store updates</li>
+        </ul>
+      </div>
+
+      <div class="mapbox">
+        <h4><span class="arrow">▸</span> Portal · dual-app side-by-side <span style="color:var(--faint)">(08-13→08-14)</span></h4>
+        <ul class="mmtree">
+          <li class="win">✔ LaunchServices refused source launches → <b>SpringBoard broker</b></li>
+          <li class="wall">✖ "Source app did not provide a window" → clean relaunch</li>
+          <li class="wall">✖ VML blank canvas / stuck on lock → content-view scaling</li>
+          <li>Checkpoint <b>38a4ab8</b> on <b>checkpoint/dual-app-portal</b>; 0.2.0-1-93 stale in repo</li>
+        </ul>
+      </div>
+
+      <div class="mapbox">
+        <h4><span class="arrow">▸</span> Live sync <span style="color:var(--faint)">(08-14→08-15)</span></h4>
+        <ul class="mmtree">
+          <li class="win">✔ Visible grid rebuilds from <b>DBApplicationController</b> + notifier callbacks</li>
+          <li class="win">✔ <b>Object-preserving</b> hiddenIcons sync — Customize stays full</li>
+          <li class="wall">✖ Build 5 · <b>0.1.4-16</b>: PAC crash loop (11 crashes)</li>
+          <li class="win">✔ Build 8 · <b>0.1.4-19</b>: setState pass-through — no crash</li>
+          <li class="open">Open: Build 19 reload gate hides the reaction; DashBoard reconciles back in ~2 min</li>
+        </ul>
+      </div>
+
+      <div class="mapbox">
+        <h4><span class="arrow">▸</span> The rules (crash → rule)</h4>
+        <ul class="mmtree">
+          <li class="rule">Trustcache kills exception-port apps → real signing cert or skip them</li>
+          <li class="rule">In-place Mach-O overwrite SIGKILLs readers → temp file + mv</li>
+          <li class="rule">helperd never backs up the binary → App Store reinstall is the only repair</li>
+          <li class="rule">Empty Customize → rebuild by moving one existing icon object, never a derived list</li>
+          <li class="rule">Never hook hot paths in carkitd; controller list is empty in the CarPlay UI process</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <div id="log" style="padding:0">
+
+  <!-- 08-11 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-11<span class="dow">Tuesday</span></span>
+      <span class="range">04:36 → 10:47 UTC</span>
+      <span class="phase patch">the origin</span>
+    </div>
+    <div class="content">
+      <h3>CLAUDE · the actual first line — a tweak that works on iOS 18.5 "same functionality with CarBridge"</h3>
+      <div class="entry note">
+        <span class="meta">claude e0b6a002 · 04:36–10:47 · ~/Documents/VipTony/carbridge</span>
+        <p>The real origin of the whole maze, verbatim: <b>"develop a tweak that work on ios 18.5 same functionality with carbridge"</b>. This is the first CarPlay session. CarBridge is the reference product: it puts any app's phone scene on the car display.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · the seed</span>
+        <p><b>The target is defined on day one:</b> icon on the dashboard, phone scene on the display — and it must work on iOS 18.5. Everything else in this maze orbits that one sentence.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08-11b -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-11<span class="dow">Tue</span></span>
+      <span class="range">08:53 → 05:03 (+1)</span>
+      <span class="phase patch">patch era</span>
+    </div>
+    <div class="content">
+      <h3>CODEX · the on-disk patch era — YouTube gets onto CarPlay</h3>
+      <div class="entry note">
+        <span class="meta">codex 019ff005 · 08-11 08:53 → 08-12 05:03 · carbridge · "continue with last session from claude"</span>
+        <p>Continuation of the Claude session above. First real work: <b>patch YouTube on disk</b> — back it up, add <code>SBStarkCapable</code>, transplant <code>YTAppViewControllerImpl</code>, trustcache it. YouTube runs on CarPlay at 640×360.</p>
+      </div>
+      <div class="entry wall">
+        <span class="meta">wall · the mixed-signing domain</span>
+        <p><b>Widevine kills the launch.</b> A platform-exec vs non-platform Widevine mismatch makes the signed app die at exec. The signing of one framework kills the whole thing.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · the fix</span>
+        <p><b>Recursively ad-hoc sign every embedded framework + fresh inode (write-then-mv).</b> After this, YouTube launches on the car display. This is the founding technique of the whole on-disk path — and the exact opposite of the in-place overwrite that later SIGKILLs readers (crash #02).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08-12 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-12<span class="dow">Wednesday</span></span>
+      <span class="phase portal">walls + rules</span>
+    </div>
+    <div class="content">
+      <h3>helperd service, then the multi-scene wall, then the RootHide rule</h3>
+      <div class="entry note">
+        <span class="meta">claude 0dc741a9 · 02:15–05:01 · helperd service</span>
+        <p><b>helperd born.</b> A helper daemon re-runs <code>cbng-patch-app.sh</code> so the patch survives every YouTube App Store update. <code>control</code> metadata cleaned up; 0.1.1 published to the repo page.</p>
+      </div>
+      <div class="entry wall">
+        <span class="meta">wall · codex 019ff45a 05:04–16:55 · multi-scene</span>
+        <p><b>Multi-scene dead end.</b> Waze runs main template + Dashboard + Instrument Cluster concurrently; rewriting one of several scenes crashes it outright. The user pivots in-session: <b>"how about if we just bridge main template into CarPlay, other things keep that"</b> — a scope cut that unblocks the maze.</p>
+      </div>
+      <div class="entry rule">
+        <span class="meta">rule · codex 019ff45a · RootHide</span>
+        <p><b>RootHide devices (iOS 16) can't carry the scene-manifest spoof the same way</b> — the injection surface differs. A <code>/tmp</code> entitlement path fix lands in <code>0.1.1-13+debug</code>. The primary test bed is the iPhone 11 / iOS 18.5; RootHide stays a compatibility target, never the lead.</p>
+      </div>
+      <div class="entry wall">
+        <span class="meta">wall · claude 91ddbddf 16:57–18:59 · blank screen</span>
+        <p><b>RootHide-patched YouTube shows blank on CarPlay.</b> The phone-side opens fine; the CarPlay scene stays black. The session ends shipping <b>0.1.3</b> — runtime admission groundwork continues in parallel.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08-13 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-13<span class="dow">Thursday</span></span>
+      <span class="range">03:27 → 14:35 UTC</span>
+      <span class="phase patch">the long day</span>
+    </div>
+    <div class="content">
+      <h3>CLAUDE + CODEX · the portal wall, the trustcache crash, the on-disk diagnostics</h3>
+
+      <div class="entry note">
+        <span class="meta">claude 61fd6019 · 03:27–04:16 · apptweak</span>
+        <p><b>Portrait CarPlay bottom chrome.</b> On a portrait car screen the bottom tabs are hidden; safe-area geometry (only <code>safeAreaInsets.left</code> subtracted) misplaces the boxless build. App-side layout fix (0.1.2 era).</p>
+      </div>
+
+      <div class="entry note">
+        <span class="meta">claude 4abb2ef2 · 03:31–06:37 · 3uTools crash diagnosis</span>
+        <p><b>3uTools dies when opened.</b> <code>notes.3u</code> (Flutter <code>Runner.app</code>) EXC_CRASH/SIGABRT. A cdhash-wrong-length lead is a red herring — the real fix is the framework <b>fresh-inode</b> trick again (inode 261917→270641). Also classified <b>Vietmap</b> as a native multi-scene CarPlay app. This is the diagnostics layer of the on-disk era, not the first dashboard app — that was YouTube on 08-11.</p>
+      </div>
+
+      <div class="entry note">
+        <span class="meta">claude 6e088e46 · 06:52–06:54 · portal request</span>
+        <p><b>The Portal is requested:</b> "this carsurf should have a portal app from carplay, 2 side by side, transplanted from 2 different apps".</p>
+      </div>
+
+      <div class="entry wall">
+        <span class="meta">wall · codex 019ff9e6 · 08-13 06:54 → 08-14 12:34 · dual-app portal</span>
+        <p><b>The dual-app portal.</b> Two source apps side by side, transplanted through a CarPlay Portal process. Three walls, each with a comeback:</p>
+        <ul class="tight">
+          <li><b>LaunchServices rejects source launches</b> from the Portal process → brokered through SpringBoard (fix <code>0.2.0-1-2+debug</code>, both <code>vn.vietmap.live</code> and <code>com.google.ios.youtube</code> register).</li>
+          <li><b>"Source app did not provide a window"</b> → clean relaunch of the source.</li>
+          <li><b>VML blank canvas / stuck when the screen locks</b> → content-view scaling.</li>
+        </ul>
+        <p>Checkpoint commit <b>38a4ab8</b> on <code>checkpoint/dual-app-portal</code> (VML experiments + helperd patches left unstaged). Debug builds climb to <code>0.2.0-1-93</code> — still stale in the repo today.</p>
+      </div>
+
+      <div class="entry wall">
+        <span class="meta">crash · claude 435c39ec 09:25–14:35 · FPT Play</span>
+        <p><b>EXC_GUARD SIGKILL ~0.7s after launch.</b> FPT Play (<code>ftel.rad.fptplay</code> 7.33.24) dies the moment it starts because its in-process crash reporter calls <code>task_swap_exception_ports</code>. The <code>jbctl trustcache add</code> step sets <code>CS_DYLD_PLATFORM</code> (codeSigningFlags <code>0x32002001</code>) and drops the Apple team ID — a guarded operation on iOS 18's code-signing monitor. Isolated to <b>the trustcache entry alone</b>: re-signing, entitlements, team-ID loss all exonerated. YouTube and 3u Notes survive — they never make that call.</p>
+      </div>
+
+      <div class="entry crash">
+        <span class="meta">crash · 435c39ec</span>
+        <p><b>SIGKILL — CODESIGNING "Invalid Page".</b> Overwriting a code-signed Mach-O in place poisons the vnode; every later reader is killed. Byte-identical copies behave oppositely (backup path rc=0, bundle path rc=137). Fix: write a temp file and <code>mv</code> over it for a fresh inode.</p>
+      </div>
+
+      <div class="entry warn">
+        <span class="meta">warning · 435c39ec</span>
+        <p><b>YouTube dies unrecoverably</b> after a day of patch/reconcile cycles — no launchd job, no crash report, every check passes. Only a fresh App Store install fixes it. Root cause class: helperd backs up only plists, never the binary it re-signs.</p>
+      </div>
+
+      <div class="entry win">
+        <span class="meta">win · 435c39ec</span>
+        <p><b>Runtime admission is reachable.</b> <code>docs/ios18-runtime-carplay-admission.md</code> proves the <code>CRCarPlayAppDeclaration</code> factories can be answered in memory — the maze has a cleaner exit again.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08-14 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-14<span class="dow">Friday</span></span>
+      <span class="range">15:02 → 16:51 UTC</span>
+      <span class="phase live">live sync</span>
+    </div>
+    <div class="content">
+      <h3>CLAUDE · live dashboard sync — the icon follows the toggle</h3>
+      <div class="entry note">
+        <span class="meta">9f6a1088 · 15:02–16:51</span>
+        <p>The session that changes the product: <b>live enable/disable</b> on the dashboard, no unplug/replug. Three non-obvious facts unearthed:</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · fact 1</span>
+        <p><b>The visible grid rebuilds from <code>DBApplicationController</code>, not the icon-state paths.</b> The CRS/SBS icon-state hooks are dormant on this head unit — <code>no active vehicle connections</code>. Mutating the roster is not enough: firing <code>_didAddApplications:</code>/<code>_didRemoveApplications:</code> right after the mutation is what makes the grid re-render in place.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · fact 2</span>
+        <p><b>The reactive-refresh handler must install before the evaluator gate.</b> <code>CarPlayTemplateUIHost</code> owns the visible grid but lacks <code>CRCarPlayAppPolicyEvaluator</code>, so it never registered the handler. Moving <code>CSInstallCarPlayApplicationLibraryRefresh</code> before the gate fixes the one process that can't react.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · fact 3</span>
+        <p><b>Enable reflow is DashBoard's own behavior</b> — it re-queries <code>allInstalledApplications</code> and rebuilds every declaration in a parallel <code>dispatch_apply</code> loop on load. Cosmetic; disable is smooth. High-risk to fight it (<code>never-hook-hot-paths-in-carkitd</code>).</p>
+      </div>
+      <div class="entry warn">
+        <span class="meta">end of session · what actually happened</span>
+        <p>The session ends on the <b>session limit</b> at 16:51:48, not on a dropped car connection. CarPlay isn't running at the end; the device is in a bad state after a dozen crash/resprings. The immediate saves: deleting the corrupted <code>CarDisplayIconState.plist</code> clears the stuck grid, and <b>0.1.4-11</b> removes the <code>_didAddApplications:</code> crash of builds ≤0.1.4-10. No new crash since the 0.1.4-11 deploy.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 08-15 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-15<span class="dow">Saturday</span></span>
+      <span class="range">04:03 → 07:33 UTC</span>
+      <span class="phase live">recovery + sync</span>
+    </div>
+    <div class="content">
+      <h3>CLAUDE · deb installer, then recovery + the hiddenIcons builds (1 → 8)</h3>
+      <div class="entry note">
+        <span class="meta">45a92c47 · 04:03–04:10</span>
+        <p><b>Quick Action deb installer.</b> <code>/Users/tonyorp/bin/deb-to-iphone.sh</code> — one click from .deb to device. Every later test runs through this.</p>
+      </div>
+      <div class="entry wall">
+        <span class="meta">wall · a78d59d2 04:16–07:33</span>
+        <p><b>The crash that empties Customize.</b> The old <code>CSFilterIconLayoutState</code> rebuilt pages from a derived/filtered list and dropped icons it couldn't account for — the Settings &gt; Customize list comes back <b>empty</b> and CarPlay crashes. Both live-apply paths are disabled; the feature is back behind a wall.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · the surgical sync</span>
+        <p><b>Object-preserving hiddenIcons sync.</b> Rebuild the <code>CRSIconLayoutState</code> by <b>moving one app's existing <code>CRSApplicationIcon</code> object</b> from its page into <code>hiddenIcons</code>; every other icon object (system icons included) is carried across unchanged. Customize stays full. Verified at the data layer: disable → 13 visible + vietmap hidden = 14 total; enable → 14 visible, hidden empty. <b>No crash, bidirectional.</b></p>
+      </div>
+      <div class="entry crash">
+        <span class="meta">crash · build 5 · 0.1.4-16</span>
+        <p><b>11-crash loop on the connected car.</b> <code>EXC_BAD_ACCESS</code> (PAC failure) in a block invoked from <code>-[CRSIconLayoutService fetchIconStateForVehicleID:completion:]</code> with <code>CSSystem.dylib</code> on the stack. DashBoard's <code>getIconStateWithCompletion:</code> segfaults reading a reconstructed <code>CRSIconLayoutState</code>; garbage top-frame = jumped through a corrupted/failed-PAC pointer = use-after-free-class crash. Rapid toggles reproduce it; accessing a <b>non-connected</b> vehicle's Customize also crashes CarPlay.</p>
+      </div>
+      <div class="entry rule">
+        <span class="meta">rule · the pivotal insight</span>
+        <p><b>The crash IS what empties Customize.</b> Build 4 (no guard, <code>0.1.4-15</code>) worked with no crash. Build 5 added the empty-state <b>block</b> guard — and that guard is when the 11-crash loop started. Reconstructing and re-serving <code>CRSIconLayoutState</code> objects to DashBoard is where it all breaks.</p>
+      </div>
+      <div class="entry win">
+        <span class="meta">win · build 8 — the comeback</span>
+        <p><b>Recovery.</b> <code>setIconState:forVehicleID:</code> back to pass-through (Build 4 behavior = no crash), live sync and no-reload gating kept. Builds 1→8: Build 1=<code>0.1.4-12</code>, 2=<code>0.1.4-13</code>, 3=<code>0.1.4-14</code>, 4=<code>0.1.4-15</code>, 5=<code>0.1.4-16</code>, 6=<code>0.1.4-17</code>, 7=<code>0.1.4-18</code>, 8=<code>0.1.4-19</code>. Final build on device: <code>com.pavunato.carsurf_0.1.4-19+debug</code>.</p>
+      </div>
+      <div class="entry warn">
+        <span class="meta">warning · current corner</span>
+        <p><b>Build 19 regresses the *visible* reaction.</b> The reload gate now skips roster rebuilds for pure disables/re-enables and relies on the service write (<code>CSApplyHiddenIconsDelta</code>), which <b>persists but does not redraw the grid without a screen reload</b>. On the CarPlay Simulator, toggling only takes effect after entering Customize (which forces a reload). Also open: DashBoard reconciles our hidden write back to all-visible in ~2 min; vehicle-ID timing gap before first fetch; README install-glob still lands on stale <code>0.2.0-1-93</code>.</p>
+      </div>
+    </div>
+  </section>
+
+  </div>
+
+  <!-- HOOKS -->
+  <section id="hooks" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">Inventory · every hook we wrote</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">All the hooks</h2>
+    <p class="sub" style="max-width:76ch">Every swizzle as an interactive mindmap. Each hook is a <b>branch</b>: open it to see <span class="hlab why" style="font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase;border:1px solid var(--blue);color:var(--blue);border-radius:4px;padding:1px 6px">why</span> we needed it — and when it <span class="hlab fail" style="font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase;border:1px solid var(--red);color:var(--red);border-radius:4px;padding:1px 6px">crashed / failed</span>, what we <span class="hlab fix" style="font:9px var(--mono);letter-spacing:.12em;text-transform:uppercase;border:1px solid var(--green);color:var(--green);border-radius:4px;padding:1px 6px">changed</span>. <code>sbtweak</code> lands in SpringBoard + CarPlay UI processes; <code>apptweak</code> lands inside each target app. Line numbers point at the current <code>main</code> working tree.</p>
+
+    <div class="maproot" style="margin-top:18px">
+      <h4>Two dylibs · one helper</h4>
+      <p>Both dylibs swizzle through the project's own <code>CSSwizzleInstanceMethod</code> helper (shared/CSRuntime.m:47). The one exception: <code>CSFullscreen.m</code> uses <code>method_setImplementation</code>/<code>class_addMethod</code>. <code>sbtweak</code> entry = <code>CSInstallCarKitPolicyHook</code> (CSCarKitPolicy.m:2450); <code>apptweak</code> entry = <code>CSInstallAppHooks</code> (CSApp.m:158).</p>
+    </div>
+
+    <div class="mmtools" style="margin-top:18px">
+      <button type="button" class="mmbtn" data-mm="open" data-target="hooks-map">Expand all</button>
+      <button type="button" class="mmbtn" data-mm="close" data-target="hooks-map">Collapse all</button>
+      <span class="mmhint">click any branch to fold / unfold it</span>
+    </div>
+
+    <div class="mmlegend">
+      <span class="lg"><span class="sw" style="background:#f5b942"></span> root / layer</span>
+      <span class="lg"><span class="sw" style="background:#2b8a5a"></span> sbtweak</span>
+      <span class="lg"><span class="sw" style="background:#3b82c4"></span> apptweak</span>
+      <span class="lg"><span class="sw" style="background:#3a4453"></span> class</span>
+      <span class="lg"><span class="bd" style="background:#7aa7ff"></span> why</span>
+      <span class="lg"><span class="bd" style="background:#ff6b6b"></span> crash / fail</span>
+      <span class="lg"><span class="bd" style="background:#6bdb9b"></span> changed</span>
+    </div>
+
+    <div id="hookgraph" class="mmgraph" style="margin-top:12px"></div>
+    <div id="hookdetail" class="mmdetail"></div>
+
+    <div class="mapbox" style="margin-top:14px">
+      <h4><span class="arrow">▸</span> Installed but deliberately dormant on this head unit</h4>
+      <p style="color:var(--dim);font-size:13px;margin-top:6px">The CRS/SBS icon-state rewrite hooks (SBSApplicationCarPlayService, CRSIconLayoutService/Controller writes) log <code>no active vehicle connections</code> on the iPhone 11 / LYNK&amp;CO — no vehicle is ever attached, so the write path never fires there. <b>Keep them</b>: they may do real stale-icon cleanup on units that do expose a vehicle. The visible-grid path is DBApplicationController + notifier callbacks instead (see 08-14).</p>
+    </div>
+  </section>
+
+  <!-- CRASHES -->
+  <section id="crashes" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">Gravel in the maze · never again</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">Every crash, and the rule it taught</h2>
+    <p class="sub" style="max-width:72ch">Seven distinct failure classes over five days. Each one became a memory note with a "how to apply".</p>
+
+    <div class="panel wall">
+      <h4><span class="num">01</span> · EXC_GUARD SIGKILL — FPT Play (crash-reporter apps)</h4>
+      <p>App SIGKILLed <b>~0.7s after launch</b>: <code>EXC_GUARD</code>, violations <code>["SET_EXCEPTION_BEHAVIOR"]</code>, GUARD_TYPE_MACH_PORT, faulting at <code>task_swap_exception_ports</code>. Isolated to the <code>jbctl trustcache add</code> step alone — the entry sets <code>CS_DYLD_PLATFORM</code> (codeSigningFlags <code>0x32002001</code>) and drops the team ID, making exception-port setup a guarded op under iOS 18's code-signing monitor. <b>Rule:</b> any app with Crashlytics/KSCrash/Sentry-style reporter needs a real signing cert; trustcache kills it on launch. Reinstall doesn't clear it — only a reboot drops the in-kernel entry.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">02</span> · SIGKILL — CODESIGNING "Invalid Page"</h4>
+      <p>Overwriting a code-signed Mach-O in place (cp -a over it, ldid -S in place) binds the old signature to the vnode; every later reader dies with <code>termination.namespace CODESIGNING, indicator "Invalid Page"</code>. Byte-identical copies behaved oppositely. <b>Rule:</b> write a temp file, <code>mv</code> over the target — fresh inode. Audit both restore paths (patch script rollback + helperd <code>CSRevertPatch</code>), which still overwrite in place.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">03</span> · SpringBoard abort — manufactured dictionary</h4>
+      <p>The scene-manifest spoof aborted SpringBoard when <code>entitlementValuesForKeys:</code> manufactured a dictionary after the real callee returned some other type (SpringBoard's <code>FBSApplicationInfo</code> gets an <code>LSBundleInfoCachedValues</code>, not an NSDictionary). <b>Rule:</b> never invent a type you don't own — hand the real object back and tag it, and let the tagged accessors answer capability keys.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">04</span> · CarPlay PAC-failure crash loop (Build 5 · 0.1.4-16, 11 crashes)</h4>
+      <p><code>EXC_BAD_ACCESS</code> (PAC failure) in a block invoked from <code>-[CRSIconLayoutService fetchIconStateForVehicleID:completion:]</code> with <code>CSSystem.dylib</code> on the stack. DashBoard's <code>getIconStateWithCompletion:</code> segfaults reading a <code>CRSIconLayoutState</code> we reconstructed; garbage top-frame address = jumped through a corrupted/failed-PAC pointer = use-after-free-class crash. Reproduced by rapid toggles and by opening the Customize list of a <b>non-connected</b> vehicle. <b>Rule:</b> the empty-state <b>block</b> guard is what started the loop — Build 4 (pass-through, no guard) never crashed. Reconstruct-and-reserve reconstructed states to DashBoard is where it breaks.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">05</span> · Empty Customize — CSFilterIconLayoutState</h4>
+      <p>The old filter rebuilt pages from a derived/filtered list and dropped every icon it couldn't account for — Settings &gt; Customize came back <b>empty</b> and CarPlay crashed. <b>Rule:</b> rebuild by <b>moving one existing icon object</b> between pages and hiddenIcons; carry every other object (system icons included) unchanged. That's the object-preserving sync in Build 6+.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">06</span> · YouTube unrecoverable launch failure</h4>
+      <p>After a day of patch/reconcile cycles YouTube stopped launching entirely: no launchd job, no crash report, every check green (cdhash trusted, SBStarkCapable present, fresh inode). Nothing on-device could undo it — a fresh App Store install fixed it instantly. <b>Rule:</b> helperd backs up only Info.plist + entitlements, never the binary; when a patched app won't launch and all checks pass, stop bisecting and reinstall from the App Store.</p>
+    </div>
+
+    <div class="panel wall">
+      <h4><span class="num">07</span> · DBApplicationController mutation crash</h4>
+      <p>The earliest live-apply path — mutating <code>DBApplicationController</code>'s model directly — crashed before the notifier-callback fix. <b>Rule:</b> mutate roster <i>and</i> fire <code>_didAddApplications:</code>/<code>_didRemoveApplications:</code>; the mutation alone is never enough (see 08-14, fact 1).</p>
+    </div>
+  </section>
+
+  <!-- WALLS -->
+  <section id="walls" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">Where the maze shut</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">Walls we hit, and comebacks</h2>
+    <table class="hooktable">
+      <tr><th>Wall</th><th>Day</th><th>Comeback</th></tr>
+      <tr><td>Mixed-signing domain: platform-exec vs non-platform Widevine</td><td>08-11</td><td>Recursively sign every embedded framework + fresh inode</td></tr>
+      <tr><td>Multi-scene forced into single-scene apps</td><td>08-12</td><td>Scope cut: bridge only the main template scene; the rest stays on the phone</td></tr>
+      <tr><td>RootHide-patched YouTube shows blank on CarPlay</td><td>08-12</td><td>RootHide stays a compatibility target; lead device is iPhone 11 / iOS 18.5</td></tr>
+      <tr><td>LaunchServices rejects source launches from the Portal process</td><td>08-13</td><td>Launch brokered through SpringBoard (fix 0.2.0-1-2+debug)</td></tr>
+      <tr><td>"Source app did not provide a window"; VML blank / stuck on lock</td><td>08-13</td><td>Clean relaunch; content-view scaling; checkpoint 38a4ab8</td></tr>
+      <tr><td>Trustcache kills crash-reporter apps</td><td>08-13</td><td>Real signing cert path (CS_SIGNING_P12); ship only apps that don't set exception ports</td></tr>
+      <tr><td>In-place Mach-O overwrite SIGKILLs readers</td><td>08-13</td><td>Write-then-mv for a fresh inode</td></tr>
+      <tr><td>helperd can't restore a damaged binary</td><td>08-13</td><td>App Store reinstall is the only repair; helperd binary backup is real work</td></tr>
+      <tr><td>CRS/SBS icon-state paths dormant on this head unit (no vehicle connection)</td><td>08-14</td><td>DBApplicationController + notifier callbacks is the live grid path</td></tr>
+      <tr><td>CRSIconLayoutController empty in the CarPlay UI process</td><td>08-15</td><td>Write through <code>CRSIconLayoutService setIconState:forVehicleID:</code> instead</td></tr>
+      <tr><td>PAC crash loop + empty Customize (Build 5 · 0.1.4-16)</td><td>08-15</td><td>Object-preserving hiddenIcons rebuild; setState pass-through (Build 8 · 0.1.4-19) recovers the device</td></tr>
+      <tr><td>Build 19: service write persists but doesn't redraw the grid; only a Customize visit forces the reload</td><td>08-15 → now</td><td><b>Open.</b> Un-gate the reload (0.1.4-16 behavior) vs. make the service write redraw — see Way out #1</td></tr>
+      <tr><td>DashBoard reconciles our hidden write back to all-visible in ~2 min</td><td>08-15 → now</td><td><b>Open.</b> Way out #2</td></tr>
+      <tr><td>Vehicle-ID timing gap before first fetch; README install-glob lands on stale <code>0.2.0-1-93</code></td><td>now</td><td><b>Open.</b> Way out #3, #5</td></tr>
+    </table>
+  </section>
+
+  <!-- WAY OUT -->
+  <section id="wayout" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">The exit, one door at a time</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">The way out</h2>
+    <div class="panel win">
+      <h4>1 · Make build 19 react live again</h4>
+      <p>Restore the visible reaction that Build 5 (0.1.4-16) had: a toggle must move the icon without entering Customize. Decide un-gate the reload (roster rebuild on every toggle — 0.1.4-16 behavior, cost: reflow on each flip) vs. make the service write redraw the grid. Then the 2-min <code>carsurf-logs</code> check on the CarPlay Simulator: does <code>hiddenIcons sync: wrote new state</code> actually fire?</p>
+    </div>
+    <div class="panel win">
+      <h4>2 · Stop DashBoard from reconciling the hidden write</h4>
+      <p>Our <code>setIconState:</code> write persists, then DashBoard rebuilds the model and puts the icon back — all-visible within ~2 min. Needs a change to the DBApplicationController-side reconcile, not the icon-state write.</p>
+    </div>
+    <div class="panel win">
+      <h4>3 · Close the vehicle-ID timing gap</h4>
+      <p><code>gLastVehicleIdentifier</code> is captured only in the CarPlay process (via certificate serial) and is per-process static — <code>CarPlayTemplateUIHost</code> never has it. First fetch can race the connection. Needs a shared/cached vehicle ID.</p>
+    </div>
+    <div class="panel win">
+      <h4>4 · helperd: back up the executable</h4>
+      <p>Add executable backup to <code>CSBackupDirectory</code> so <code>CSRevertPatch</code> can undo a damaged binary, not just the plists. Real fix, not polish.</p>
+    </div>
+    <div class="panel win">
+      <h4>5 · Fix the README install glob</h4>
+      <p>The documented install command still resolves to stale <code>0.2.0-1-93</code>. Pin to the current <code>0.1.4-19+debug</code> artifact or glob <code>packages/*</code> by newest mtime.</p>
+    </div>
+    <div class="panel">
+      <h4>North star, unchanged</h4>
+      <p>Clean exit: runtime admission only — no on-disk app mutation, no trustcache, no per-app dylib. That's the version that survives App Store updates. The on-disk and runtime paths coexist until the runtime path covers every app.</p>
+    </div>
+  </section>
+
+  <!-- SESSIONS -->
+  <section id="sessions" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">Appendix</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">All sessions, sorted by date</h2>
+    <table class="hooktable">
+      <tr><th>Date (UTC)</th><th>Agent</th><th>Session</th><th>What happened</th></tr>
+      <tr><td>08-11 04:36–10:47</td><td>Claude</td><td>e0b6a002 (carbridge)</td><td><b>The origin</b> — "tweak that works on iOS 18.5, same functionality with CarBridge"</td></tr>
+      <tr><td>08-11 08:53–08-12 05:03</td><td>Codex</td><td>019ff005 (carbridge)</td><td>On-disk patch era — YouTube patched/SBStarkCapable; Widevine mixed-signing crash → sign all frameworks + fresh inode</td></tr>
+      <tr><td>08-11 13:27–13:53</td><td>Claude</td><td>8096e021 (carbridge)</td><td>"Patch the app… let's deep dive and find another way"</td></tr>
+      <tr><td>08-12 02:15–05:01</td><td>Claude</td><td>0dc741a9 (carbridge)</td><td>helperd service re-runs cbng-patch-app.sh on every YouTube update; 0.1.1 published</td></tr>
+      <tr><td>08-12 05:04–16:55</td><td>Codex</td><td>019ff45a (carbridge)</td><td>Multi-scene dead end (Waze); pivot: bridge only the main template; RootHide /tmp fix in 0.1.1-13+debug</td></tr>
+      <tr><td>08-12 16:57–18:59</td><td>Claude</td><td>91ddbddf (carbridge)</td><td>RootHide-patched YouTube blank on CarPlay; 0.1.3 shipped</td></tr>
+      <tr><td>08-13 03:27–04:16</td><td>Claude</td><td>61fd6019</td><td>Portrait CarPlay bottom chrome / safe-area (apptweak)</td></tr>
+      <tr><td>08-13 03:31–06:37</td><td>Claude</td><td>4abb2ef2</td><td>3uTools crash diagnosis (notes.3u); framework fresh-inode fix; Vietmap = native multi-scene</td></tr>
+      <tr><td>08-13 06:52–06:54</td><td>Claude</td><td>6e088e46</td><td>Portal request (2 apps side by side)</td></tr>
+      <tr><td>08-13 06:54–08-14 12:34</td><td>Codex</td><td>019ff9e6 (big)</td><td>Dual-app portal build; LaunchServices → SpringBoard broker; "no window" + VML walls; checkpoint 38a4ab8; 0.2.0-1-93</td></tr>
+      <tr><td>08-13 09:25–14:35</td><td>Claude</td><td>435c39ec</td><td>FPT Play trustcache EXC_GUARD; Invalid Page; helperd no-backup; runtime admission reachable</td></tr>
+      <tr><td>08-13 16:15–16:16</td><td>Codex</td><td>019ffbe8 (big-b)</td><td>Admission research fork</td></tr>
+      <tr><td>08-14 15:02–16:51</td><td>Claude</td><td>9f6a1088</td><td>Live dashboard sync; DBApplicationController facts; ends on session limit, clean plist, 0.1.4-11</td></tr>
+      <tr><td>08-15 04:03–04:10</td><td>Claude</td><td>45a92c47</td><td>deb Quick Action installer (deb-to-iphone.sh)</td></tr>
+      <tr><td>08-15 04:16–07:33</td><td>Claude</td><td>a78d59d2</td><td>Recovery + hiddenIcons builds 1→8; PAC crash loop (0.1.4-16); Build 8 (0.1.4-19) recovery</td></tr>
+    </table>
+    <p class="sub" style="margin-top:14px;max-width:76ch">Source logs: <code>~/.claude/projects/-Users-tonyorp-Documents-VipTony-carbridge/*.jsonl</code>, <code>~/.claude/projects/-Users-tonyorp-Documents-VipTony-jail-tweak/*.jsonl</code>, and <code>~/.codex/sessions/2026/08/**/rollout-*.jsonl</code> (incl. the 89&nbsp;MB 08-13 one). Memory notes: <code>…/memory/</code> — 16 files that codified every wall and rule above.</p>
+  </section>
+
+  <!-- ERRATA -->
+  <section id="errata" style="border-top:1px solid var(--line);padding:48px 0">
+    <div class="kicker" style="margin-bottom:6px">Audit trail</div>
+    <h2 style="font-size:26px;letter-spacing:-.01em;margin-bottom:6px">Errata — corrected against the transcripts</h2>
+    <p class="sub" style="max-width:76ch">This page was rebuilt from primary evidence (session JSONLs, memory notes, git, package binaries). The following earlier claims were <b>fabricated or wrong</b> and are now fixed:</p>
+    <table class="hooktable" style="margin-top:14px">
+      <tr><th>Old claim</th><th>Truth (with evidence)</th></tr>
+      <tr><td>"First spark" on 08-06 (CarBridge concept drafted)</td><td>The 08-06 Codex session (<code>019fd541</code>) was <b>~/Documents/VipTony/alpha-ai</b> — a Hyperliquid copy-trading plan ("review idea.md and create dev plan"). Not CarPlay. The real origin is 08-11 e0b6a002. 08-06 removed from the log; kept here only as a correction.</td></tr>
+      <tr><td>"Injection skeleton born" on 08-11; "$SYSROOT foundation"</td><td>08-11 codex <code>019ff005</code> was the <b>on-disk patch era</b> (YouTube + Widevine mixed-signing). No injection skeleton, no $SYSROOT mention in that session.</td></tr>
+      <tr><td>08-12 multi-scene + "patch log"</td><td>08-12 had <b>four</b> sessions (0dc741a9 helperd, 019ff45a multi-scene dead end, 91ddbddf blank-screen + 0.1.3, plus 019ff3dc Dopamine research). The "patch log" framing was vague; replaced with the real four.</td></tr>
+      <tr><td>"Portal wall 13 / 16 / 21"; "adapter graveyard"</td><td><b>Fabricated</b> — zero regex hits for wall+13|16|21 or "graveyard" in the 08-13 codex log. Real walls: LaunchServices broker, "source app did not provide a window", VML blank/stuck. Evidence: 246 portal mentions, checkpoint 38a4ab8, packages 0.2.0-1-2 … 0.2.0-1-93.</td></tr>
+      <tr><td>4abb2ef2 = "on-disk patch era, first real dashboard app"</td><td>4abb2ef2 was <b>3uTools crash diagnosis</b> (notes.3u, Flutter Runner.app). First real dashboard app was YouTube on 08-11.</td></tr>
+      <tr><td>08-14 "session dies mid-car-connection: CarPlay drops and never reattaches"</td><td>Session ended on the <b>session limit</b> at 16:51:48; car layout deleted, clean plist, 0.1.4-11 removed the <code>_didAddApplications:</code> crash; no new crash since deploy.</td></tr>
+      <tr><td>"Build 5 (0.1.4-17 era)"</td><td>Build 5 = <b>0.1.4-16</b> (PAC crash loop + empty-state guard). Verified against transcript + packages/.</td></tr>
+      <tr><td>"iPhone X" device naming</td><td>Device log name is <code>iphone-10-roothide-16.7.12</code> (a physical iPhone X). Label updated in header.</td></tr>
+    </table>
+  </section>
+
+</main>
+
+<footer>
+  CarSurf · maze map generated 2026-08-15 from all Claude + Codex transcripts, memory notes, git history, and the live working tree. Every date is the session's actual first/last message timestamp (UTC). Line refs are to the current working tree, which   carries uncommitted changes on <code>research/fpt-play-runtime-admission</code>.
+</footer>
+<script>
+(function(){
+  var NS = 'http://www.w3.org/2000/svg';
+  var measure = (function(){
+    var c = document.createElement('canvas').getContext('2d');
+    return function(s, f){ c.font = f || '11px Menlo, monospace'; return c.measureText(s).width; };
+  })();
+
+  var HOOKS = {
+    id: 'root', t: 'root', label: 'CarSurf · hooks',
+    sub: '2 dylibs · 1 helper',
+    why: 'Every hook lands through our own <code>CSSwizzleInstanceMethod</code> (shared/CSRuntime.m:47); the one exception is <code>CSFullscreen.m</code>, which uses <code>method_setImplementation</code>/<code>class_addMethod</code>. Entries: <code>CSInstallCarKitPolicyHook</code> (CSCarKitPolicy.m:2450) and <code>CSInstallAppHooks</code> (CSApp.m:158).',
+    kids: [
+      { id: 'sb', t: 'dylib', label: 'sbtweak', sub: 'SpringBoard + CarPlay UI process', g: 'sb', kids: [
+        { id: 'sb-gate', t: 'layer', label: 'Admission gate — allowlist core', kids: [
+          { id: 'sb-eval', t: 'cls', label: 'CRCarPlayAppPolicyEvaluator', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-eval1', t: 'hook', label: 'effectivePolicyForAppDeclaration:', loc: 'CSCarKitPolicy.m:2479',
+              why: 'Every CarPlay candidate must pass through the policy evaluator. This hook is the <b>allowlist core</b> — deny/allow the app\'s declaration so only our apps reach the dashboard.' },
+            { id: 'sb-eval2', t: 'hook', label: 'effectivePolicyForAppDeclaration:inVehicleWithCertificateSerial:', loc: 'CSCarKitPolicy.m:2484',
+              why: 'Same gate, but in-vehicle — the certificate serial is where a stable vehicle identifier appears.',
+              fail: '<code>gLastVehicleIdentifier</code> is captured only here, in the CarPlay process, and is a per-process static — <code>CarPlayTemplateUIHost</code> never has it, so the first icon-state fetch can race the connection (Way out #3).' }
+          ]},
+          { id: 'sb-decl', t: 'cls', label: 'CRCarPlayAppDeclaration', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-decl1', t: 'hook', label: 'setBundleIdentifier:', loc: 'CSCarKitPolicy.m:2441',
+              why: 'Pure trace — sees which bundle ID is being materialized into a declaration, so we can confirm runtime admission actually fires.' },
+            { id: 'sb-decl2', t: 'hook', label: '7 factories: declarationForBundleIdentifier:… · declarationForAppProxy: · declarationForAppRecord:', loc: 'CSCarKitPolicy.m:2390–2421',
+              why: '<b>Runtime admission</b> — fabricate a valid CarPlay declaration in memory; the clean maze exit that survives App Store updates.',
+              fix: 'When the main factory is absent, fall back to the on-disk patch path — the two paths coexist until runtime covers every app.' }
+          ]}
+        ]},
+        { id: 'sb-sync', t: 'layer', label: 'Icon-state live sync', kids: [
+          { id: 'sb-sbs', t: 'cls', label: 'SBSApplicationCarPlayService', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-sbs1', t: 'hook', label: 'fetch / reset / set icon-state (3)', loc: 'CSCarKitPolicy.m:2353–2368',
+              why: 'Read-only roster trace — instruments the icon-state service so the live sync can compute the hiddenIcons delta.',
+              fix: 'Retries 5× because the class loads lazily — a race on first touch used to leave the trace dead.',
+              fail: 'Dormant on the LYNK&amp;CO head unit: logs <code>no active vehicle connections</code>, so the write path never fires there (08-14).' }
+          ]},
+          { id: 'sb-svc', t: 'cls', label: 'CRSIconLayoutService', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-svc1', t: 'hook', label: 'initWithDelegate: · listener: · connection queue (4)', loc: 'CSCarKitPolicy.m:1596–1607',
+              why: 'Live connection tracking for the per-vehicle icon state — without it the sync writer has nowhere to write.' },
+            { id: 'sb-svc2', t: 'hook', label: 'setIconState:forVehicleID: — the live-sync writer', loc: 'CSCarKitPolicy.m:1608',
+              why: 'Rebuilds the state by <b>moving one existing icon object</b> into <code>hiddenIcons</code>; every other icon object (system icons included) survives unchanged — Customize stays full.',
+              fail: 'Build 5 (<code>0.1.4-16</code>) added an empty-state <b>block</b> guard here — that guard started the 11-crash PAC loop.',
+              fix: 'Build 8 (<code>0.1.4-19</code>) reverted to pass-through (Build-4 behavior) — no crash; live sync and no-reload gating kept.' },
+            { id: 'sb-svc3', t: 'hook', label: 'fetchIconStateForVehicleID:completion:', loc: 'CSCarKitPolicy.m:1611',
+              why: 'Fetch-state service hook — reads the current state so the delta can be computed.',
+              fail: 'Build 5\'s PAC crash lived here: DashBoard\'s <code>getIconStateWithCompletion:</code> segfaulted reading a reconstructed <code>CRSIconLayoutState</code>; garbage top-frame = jumped through a corrupted/failed-PAC pointer.',
+              fix: 'Reconstruct-and-reserve path removed with the pass-through recovery.' }
+          ]},
+          { id: 'sb-ctrl', t: 'cls', label: 'CRSIconLayoutController', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-ctrl1', t: 'hook', label: 'init · setConnection: · setIconOrder: · fetch (4)', loc: 'CSCarKitPolicy.m:1617–1628',
+              why: 'Controller side of the sync — the intended writer for per-vehicle icon order.',
+              fail: 'The controller list is <b>empty</b> in the CarPlay UI process — an earlier delta iterated it and never wrote.',
+              fix: 'Write through <code>CRSIconLayoutService setIconState:forVehicleID:</code> instead.' }
+          ]}
+        ]},
+        { id: 'sb-lib', t: 'layer', label: 'App library + manifest spoof', kids: [
+          { id: 'sb-fbs', t: 'cls', label: 'FBSApplicationLibrary', sub: 'CSCarKitPolicy.m', kids: [
+            { id: 'sb-fbs1', t: 'hook', label: 'allInstalledApplications · applicationsDidUninstall:', loc: 'CSCarKitPolicy.m:2241–2244',
+              why: 'Application-library refresh + enable/disable baseline capture; reacts to prefs changes — the input to the DBApplicationController visible-grid path (08-14, fact 1).' }
+          ]},
+          { id: 'sb-lsp', t: 'cls', label: 'LSBundleProxy', sub: 'CSSceneManifestSpoof.m', kids: [
+            { id: 'sb-lsp1', t: 'hook', label: 'entitlementValueForKey:ofClass:… (4)', loc: 'CSSceneManifestSpoof.m:558–572',
+              why: '<b>Scene-manifest spoof</b> — answer CarPlay capability keys at runtime so an app claims a car scene without touching its Info.plist.',
+              fail: 'Crash #03: manufacturing a dictionary when the real callee returned another type aborted SpringBoard — <code>FBSApplicationInfo</code> got an <code>LSBundleInfoCachedValues</code>, not an NSDictionary.',
+              fix: 'Never invent a type you don\'t own — hand the real object back and tag it; the tagged accessors answer capability keys.' }
+          ]},
+          { id: 'sb-licv', t: 'cls', label: 'LSBundleInfoCachedValues', sub: 'CSSceneManifestSpoof.m', kids: [
+            { id: 'sb-licv1', t: 'hook', label: 'boolForKey: · objectForKey: · numberForKey: … (5)', loc: 'CSSceneManifestSpoof.m:363–374',
+              why: 'SpringBoard\'s half of the admission gate — tags cached values so the <code>LSBundleProxy</code> accessors answer capability keys.' }
+          ]},
+          { id: 'sb-car', t: 'cls', label: 'CARApplication', sub: 'CSAppList.m', kids: [
+            { id: 'sb-car1', t: 'hook', label: '_allInstalledApplications · _allInstalledApplicationsByBundleIdentifier', loc: 'CSAppList.m:118–122',
+              why: 'App-list filter — trims the dashboard library to allowlisted apps.' }
+          ]}
+        ]}
+      ]},
+      { id: 'app', t: 'dylib', label: 'apptweak', sub: 'inside each target app', g: 'app', kids: [
+        { id: 'app-bridge', t: 'layer', label: 'Scene bridge', kids: [
+          { id: 'app-usc', t: 'cls', label: 'UISceneConfiguration', sub: 'CSSceneBridge.m', kids: [
+            { id: 'app-usc1', t: 'hook', label: 'initWithName:sessionRole:', loc: 'CSSceneBridge.m:389',
+              why: 'Rewrite the session role so the app claims a car scene.' }
+          ]},
+          { id: 'app-uss', t: 'cls', label: 'UISceneSession', sub: 'CSSceneBridge.m', kids: [
+            { id: 'app-uss1', t: 'hook', label: 'role', loc: 'CSSceneBridge.m:393',
+              why: 'Role rewrite — the car scene is "bridged".' }
+          ]},
+          { id: 'app-usm', t: 'cls', label: 'UIApplicationSceneManifest', sub: 'CSSceneBridge.m', kids: [
+            { id: 'app-usm1', t: 'hook', label: 'supportsMultipleScenes · configurationForRole: (+2 probes)', loc: 'CSSceneBridge.m:398–412',
+              why: 'Multi-scene bridge — lets us bridge only the main template scene of a multi-scene app.',
+              fail: 'Forcing a second UIScene into a single-scene app crashed it outright; rewriting one of several Waze scenes crashed the whole app (08-12 wall).',
+              fix: 'Scope cut: bridge only the main template, keep the rest on the phone. The lookup selector moved across iOS releases, so it probes 3 names.' }
+          ]}
+        ]},
+        { id: 'app-traits', t: 'layer', label: 'Traits', kids: [
+          { id: 'app-tt', t: 'cls', label: 'UITraitCollection / UIDevice', sub: 'CSTraits.m', kids: [
+            { id: 'app-tt1', t: 'hook', label: 'userInterfaceIdiom', loc: 'CSTraits.m:75–81',
+              why: 'Idiom override — phone UI lays out for the car screen instead of letterboxing as a phone.' }
+          ]}
+        ]},
+        { id: 'app-kbd', t: 'layer', label: 'Keyboard (8 hooks)', kids: [
+          { id: 'app-k1', t: 'cls', label: '_UIApplicationSceneKeyboardClientComponent', sub: 'CSKeyboard.m', kids: [
+            { id: 'app-k1h', t: 'hook', label: 'suppressKeyboardFocusRequests', loc: 'CSKeyboard.m:339',
+              why: 'Keep the car keyboard alive — focus requests would dismiss it.' }
+          ]},
+          { id: 'app-k2', t: 'cls', label: 'UIKeyboardImpl', sub: 'CSKeyboard.m', kids: [
+            { id: 'app-k2h', t: 'hook', label: '_shouldSuppressSoftwareKeyboard… (4 variants)', loc: 'CSKeyboard.m:345–361',
+              why: 'Force the software keyboard through the external-scene policy, which suppresses it by default on the car screen.' }
+          ]},
+          { id: 'app-k3', t: 'cls', label: 'UIInputResponderController', sub: 'CSKeyboard.m', kids: [
+            { id: 'app-k3h', t: 'hook', label: 'automaticAppearanceEnabled', loc: 'CSKeyboard.m:364',
+              why: 'Keyboard auto-appearance on the car screen.' }
+          ]},
+          { id: 'app-k4', t: 'cls', label: 'UIResponder', sub: 'CSKeyboard.m', kids: [
+            { id: 'app-k4h', t: 'hook', label: 'becomeFirstResponder · resignFirstResponder', loc: 'CSKeyboard.m:369–375',
+              why: 'Shows/dismisses the fallback keyboard around focus changes.' }
+          ]}
+        ]},
+        { id: 'app-yt', t: 'layer', label: 'YouTube fullscreen', sub: 'CSFullscreen.m', kids: [
+          { id: 'app-y1', t: 'cls', label: 'YTWatchViewController', sub: 'CSFullscreen.m', kids: [
+            { id: 'app-y1h', t: 'hook', label: 'viewWillAppear: · viewDidDisappear:', loc: 'CSFullscreen.m:98–106',
+              why: 'Inline player — mark the watch page active so the player stays horizontal on the car display.' }
+          ]},
+          { id: 'app-y2', t: 'cls', label: 'YTWatchFullscreenViewController', sub: 'CSFullscreen.m', kids: [
+            { id: 'app-y2h', t: 'hook', label: 'viewWillAppear: · viewDidDisappear:', loc: 'CSFullscreen.m:108–116',
+              why: 'Fullscreen enter/exit for the watch player.',
+              fix: 'Defers one run-loop turn so <code>viewDidDisappear</code> can\'t misinterpret the fullscreen cover as leaving the player.' }
+          ]}
+        ]}
+      ]}
+    ]
+  };
+
+  var collapsed = new Set();
+  var branchIds = [];
+  (function all(n){ if (n.kids) { branchIds.push(n.id); n.kids.forEach(all); } })(HOOKS);
+
+  function nodeWidth(n){
+    var w = measure(n.label, '600 12px Menlo, monospace');
+    var line2 = n.sub || n.loc;
+    if (line2){ var w2 = measure(line2, '10px Menlo, monospace'); if (w2 > w) w = w2; }
+    var base = w + 24 + (n.t === 'hook' ? 34 : 0);
+    return Math.max(base, 96);
+  }
+
+  function layout(n, depth, st){
+    n.x = depth * 240;
+    n.w = nodeWidth(n); n.h = 46;
+    if (!n.kids || collapsed.has(n.id)){
+      n.y = st.next; st.next += 54; return n.y;
+    }
+    var ys = n.kids.map(function(k){ return layout(k, depth + 1, st); });
+    n.y = (ys[0] + ys[ys.length - 1]) / 2;
+    return n.y;
+  }
+
+  function flatten(n, out){
+    out.push(n);
+    if (n.kids && !collapsed.has(n.id)) n.kids.forEach(function(k){ flatten(k, out); });
+    return out;
+  }
+
+  function fillFor(n){
+    if (n.t === 'root') return '#261a08';
+    if (n.t === 'dylib') return n.g === 'app' ? '#0d1b2a' : '#0e2317';
+    if (n.t === 'layer') return '#1c1910';
+    if (n.t === 'cls') return '#151923';
+    return '#131318';
+  }
+  function strokeFor(n){
+    if (n.t === 'root') return '#f5b942';
+    if (n.t === 'dylib') return n.g === 'app' ? '#3b82c4' : '#2b8a5a';
+    if (n.t === 'layer') return '#7a5c1e';
+    if (n.t === 'cls') return '#3a4453';
+    return '#2a2f3a';
+  }
+  function titleFor(n){
+    if (n.t === 'root') return '#f7c86b';
+    if (n.t === 'dylib') return n.g === 'app' ? '#9cc9f0' : '#9fe3bf';
+    if (n.t === 'layer') return '#f5b942';
+    if (n.t === 'cls') return '#cfd8e8';
+    return '#d8d5ee';
+  }
+
+  function nodeGroup(n){
+    var g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'mmnode');
+    g.setAttribute('transform', 'translate(' + n.x + ',' + (n.y - n.h / 2) + ')');
+
+    var r = document.createElementNS(NS, 'rect');
+    r.setAttribute('class', 'mbbox');
+    r.setAttribute('width', n.w); r.setAttribute('height', n.h);
+    r.setAttribute('rx', 9);
+    r.setAttribute('fill', fillFor(n));
+    r.setAttribute('stroke', strokeFor(n));
+    g.appendChild(r);
+
+    var tx = 12;
+    if (n.t === 'hook'){
+      var dots = [];
+      if (n.why) dots.push('#7aa7ff');
+      if (n.fail) dots.push('#ff6b6b');
+      if (n.fix) dots.push('#6bdb9b');
+      dots.forEach(function(c, i){
+        var d = document.createElementNS(NS, 'circle');
+        d.setAttribute('cx', 14 + i * 14); d.setAttribute('cy', 12);
+        d.setAttribute('r', 3.2); d.setAttribute('fill', c);
+        g.appendChild(d);
+      });
+      tx = 14 + dots.length * 14 + 6;
+    }
+
+    var t1 = document.createElementNS(NS, 'text');
+    t1.setAttribute('x', tx);
+    t1.setAttribute('y', n.sub || n.loc ? 19 : 28);
+    t1.setAttribute('font-size', '12'); t1.setAttribute('font-weight', '600');
+    t1.setAttribute('fill', titleFor(n));
+    t1.textContent = n.label;
+    g.appendChild(t1);
+
+    var line2 = n.sub || n.loc;
+    if (line2){
+      var t2 = document.createElementNS(NS, 'text');
+      t2.setAttribute('x', tx); t2.setAttribute('y', 35);
+      t2.setAttribute('font-size', '10');
+      t2.setAttribute('class', 'mmin');
+      t2.textContent = line2;
+      g.appendChild(t2);
+    }
+
+    if (n.kids){
+      var ind = document.createElementNS(NS, 'text');
+      ind.setAttribute('x', n.w - 12); ind.setAttribute('y', 28);
+      ind.setAttribute('text-anchor', 'end');
+      ind.setAttribute('font-size', '13'); ind.setAttribute('fill', '#6b6875');
+      ind.textContent = collapsed.has(n.id) ? '+' : '−';
+      g.appendChild(ind);
+    }
+
+    g.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      if (n.kids){
+        if (collapsed.has(n.id)) collapsed.delete(n.id); else collapsed.add(n.id);
+        renderGraph();
+      } else {
+        showDetail(n);
+      }
+    });
+    return g;
+  }
+
+  function renderGraph(){
+    var st = { next: 40 };
+    layout(HOOKS, 0, st);
+    var nodes = flatten(HOOKS, []);
+    var W = 0, H = st.next + 90;
+    nodes.forEach(function(n){ var r = n.x + n.w + 80; if (r > W) W = r; });
+
+    var svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);
+    svg.setAttribute('width', W); svg.setAttribute('height', H);
+
+    nodes.forEach(function(n){
+      if (!n.kids || collapsed.has(n.id)) return;
+      n.kids.forEach(function(k){
+        var x1 = n.x + n.w, y1 = n.y, x2 = k.x, y2 = k.y, mx = (x1 + x2) / 2;
+        var p = document.createElementNS(NS, 'path');
+        p.setAttribute('class', 'mmedge');
+        p.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + mx + ',' + y1 + ' ' + mx + ',' + y2 + ' ' + x2 + ',' + y2);
+        p.setAttribute('stroke', collapsed.has(k.id) ? '#3a4453' : '#56607a');
+        p.setAttribute('stroke-width', '1.6');
+        svg.appendChild(p);
+      });
+    });
+
+    nodes.forEach(function(n){ svg.appendChild(nodeGroup(n)); });
+
+    var box = document.getElementById('hookgraph');
+    box.innerHTML = '';
+    box.appendChild(svg);
+  }
+
+  function detailRow(box, cls, label, html){
+    var div = document.createElement('div');
+    div.setAttribute('class', 'drow');
+    var lab = document.createElement('span');
+    lab.setAttribute('class', 'dlab ' + cls);
+    lab.textContent = label;
+    var p = document.createElement('p');
+    p.innerHTML = html;
+    div.appendChild(lab); div.appendChild(p);
+    box.appendChild(div);
+  }
+
+  function showDetail(n){
+    var box = document.getElementById('hookdetail');
+    box.innerHTML = '';
+    var h = document.createElement('h5');
+    h.textContent = n.t === 'hook' ? 'hook · the story' : n.t === 'root' ? 'root' : n.t === 'dylib' ? 'dylib' : n.t === 'layer' ? 'layer' : 'class';
+    box.appendChild(h);
+    var t = document.createElement('p');
+    t.style.cssText = 'color:var(--ink);font:600 13px var(--mono);margin-bottom:6px';
+    t.textContent = n.label;
+    box.appendChild(t);
+    var loc = (n.sub || '') + (n.sub && n.loc ? ' · ' : '') + (n.loc || '');
+    if (loc){
+      var dloc = document.createElement('div');
+      dloc.setAttribute('class', 'dloc');
+      dloc.textContent = loc;
+      box.appendChild(dloc);
+    }
+    if (n.why) detailRow(box, 'why', 'why', n.why);
+    if (n.fail) detailRow(box, 'fail', 'crash / fail', n.fail);
+    if (n.fix) detailRow(box, 'fix', 'changed', n.fix);
+    if (n.kids){
+      var note = document.createElement('p');
+      note.style.cssText = 'color:var(--faint);font-size:11px';
+      note.textContent = (collapsed.has(n.id) ? n.kids.length + ' folded branches' : n.kids.length + ' branches open') + ' · click the node to fold / unfold';
+      box.appendChild(note);
+    }
+  }
+
+  document.querySelectorAll('.mmbtn').forEach(function(btn){
+    btn.addEventListener('click', function(){
+      collapsed = btn.getAttribute('data-mm') === 'open' ? new Set() : new Set(branchIds);
+      renderGraph();
+    });
+  });
+
+  renderGraph();
+  showDetail(HOOKS);
+})();
+</script>
+</body>
+</html>

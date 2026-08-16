@@ -5,6 +5,9 @@
 static NSString *const kPrefsPath =
     @"/var/mobile/Library/Preferences/com.pavunato.carsurf.plist";
 static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
+static NSString *const kApplicationLibraryChangeNotification =
+    @"com.pavunato.carsurf/application-library-change";
+static NSString *const kDashboardDisabledKey = @"dashboardDisabled";
 
 @implementation CSPrefsStore {
     NSMutableDictionary *_root;
@@ -132,6 +135,30 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
 
 - (void)setApp:(NSString *)bundleIdentifier enabled:(BOOL)enabled {
     [self setValue:enabled ? @YES : nil key:@"enabled" forApp:bundleIdentifier];
+
+    // Keep a small persistent tombstone for deliberately disabled Carsurf
+    // entries. The CarPlayTemplateUIHost process can restart without a live
+    // DBApplicationController, so a process-local removed-ID set alone cannot
+    // filter a stale icon after a respring. Re-enabling removes the tombstone.
+    NSMutableArray *disabled = [_root[kDashboardDisabledKey] isKindOfClass:NSArray.class]
+                                    ? [_root[kDashboardDisabledKey] mutableCopy]
+                                    : [NSMutableArray new];
+    [disabled removeObject:bundleIdentifier];
+    if (!enabled && bundleIdentifier.length > 0 && ![disabled containsObject:bundleIdentifier]) {
+        [disabled addObject:bundleIdentifier];
+    }
+    if (disabled.count > 0) {
+        _root[kDashboardDisabledKey] = disabled;
+    } else {
+        [_root removeObjectForKey:kDashboardDisabledKey];
+    }
+    [self flush];
+
+    // This is the preference-side equivalent of FBSApplicationLibrary's
+    // applicationsDidInstall:/applicationsDidUninstall: callback. The CarPlay
+    // process listens for it and performs the same roster/controller refresh,
+    // so an app enabled in Carsurf appears without unplugging or respringing.
+    notify_post(kApplicationLibraryChangeNotification.UTF8String);
 }
 
 - (id)value:(NSString *)key forApp:(NSString *)bundleIdentifier {

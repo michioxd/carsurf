@@ -25,13 +25,16 @@ chown mobile:mobile "$LOGDIR" 2>/dev/null || true
 [ -f "$LOGDIR/carsurf.log" ] && chmod 666 "$LOGDIR/carsurf.log" 2>/dev/null || true
 
 # The root helper grants the CarPlay entitlement when an app is enabled in Settings;
-# neither the tweak nor Settings can do that themselves.
+# neither the tweak nor Settings can do that themselves.  It is intentionally
+# disabled by default: runtime admission is the active path, and automatically
+# starting this daemon on every package upgrade would silently re-enable on-disk
+# app patching.  Users who explicitly need patching can load the plist manually.
 PLIST=/var/jb/Library/LaunchDaemons/com.pavunato.carsurf.helperd.plist
 if [ -f "$PLIST" ] && [ -x /var/jb/usr/bin/launchctl ]; then
-    # Unload first, so reinstalling actually picks up the new binary instead of
-    # leaving the previous one running.
-    /var/jb/usr/bin/launchctl unload "$PLIST" 2>/dev/null || true
-    /var/jb/usr/bin/launchctl load -w "$PLIST" 2>/dev/null || true
+    # Unload and persist the disabled state.  Do not call `load -w` here: that
+    # would undo the user's decision every time a new Carsurf package is installed.
+    /var/jb/usr/bin/launchctl unload -w "$PLIST" 2>/dev/null || \
+        /var/jb/usr/bin/launchctl unload "$PLIST" 2>/dev/null || true
 fi
 
 exit 0

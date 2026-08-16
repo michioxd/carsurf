@@ -97,7 +97,6 @@ static UIImage *CSSmallAppIcon(NSString *bundleIdentifier) {
     [specifiers addObjectsFromArray:[self specifiersForApplicationsOfType:@"User"]];
 
 #if !CARSURF_HIDE_SYSTEM_APPS
-    // Off by default (CARSURF_HIDE_SYSTEM_APPS=1 in the top-level Makefile).
     // A system app can carry a dedicated seatbelt profile that only grants
     // after verifying the binary's *real* Apple signature — no re-signing
     // tool can satisfy that, entitlements can be reverted but the signature

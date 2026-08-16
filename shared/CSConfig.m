@@ -4,6 +4,9 @@
 #import "CSLog.h"
 #import <dlfcn.h>
 #import <notify.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
+#import <sys/stat.h>
 
 static NSString *const kPrefsPath =
     @"/var/mobile/Library/Preferences/com.pavunato.carsurf.plist";
@@ -180,6 +183,117 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
     });
 }
 
+- (void)pruneMissingApplications {
+    // LaunchServices is the source of truth only in SpringBoard. In CarPlay,
+    // app, and preferences processes a partial/sandboxed view could make a
+    // healthy entry look absent and accidentally delete the user's choice.
+    if (![NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"]) {
+        return;
+    }
+
+    Class workspaceClass = objc_getClass("LSApplicationWorkspace");
+    SEL defaultWorkspaceSelector = sel_registerName("defaultWorkspace");
+    SEL allApplicationsSelector = sel_registerName("allApplications");
+    if (!workspaceClass || ![workspaceClass respondsToSelector:defaultWorkspaceSelector]) {
+        CSLog("preference prune skipped: LSApplicationWorkspace unavailable");
+        return;
+    }
+
+    id workspace = ((id (*)(Class, SEL))objc_msgSend)(workspaceClass,
+                                                       defaultWorkspaceSelector);
+    NSArray *installedApplications =
+        (workspace && [workspace respondsToSelector:allApplicationsSelector])
+            ? ((id (*)(id, SEL))objc_msgSend)(workspace, allApplicationsSelector)
+            : nil;
+    if (![installedApplications isKindOfClass:NSArray.class]) {
+        CSLog("preference prune skipped: LaunchServices returned no application list");
+        return;
+    }
+
+    NSMutableSet<NSString *> *installedIdentifiers = [NSMutableSet setWithCapacity:installedApplications.count];
+    SEL identifierSelector = sel_registerName("applicationIdentifier");
+    for (id proxy in installedApplications) {
+        if (!proxy || ![proxy respondsToSelector:identifierSelector]) continue;
+        id identifier = ((id (*)(id, SEL))objc_msgSend)(proxy, identifierSelector);
+        if ([identifier isKindOfClass:NSString.class] && [(NSString *)identifier length] > 0) {
+            [installedIdentifiers addObject:(NSString *)identifier];
+        }
+    }
+
+    // An empty list means LaunchServices is not ready yet, not that every app
+    // was removed. Waiting here avoids wiping the plist during early boot.
+    if (installedIdentifiers.count == 0) {
+        CSLog("preference prune skipped: LaunchServices list is empty");
+        return;
+    }
+
+    __block NSDictionary *root = nil;
+    dispatch_sync(_queue, ^{ root = _root; });
+    NSDictionary *savedApps = [root[@"apps"] isKindOfClass:NSDictionary.class]
+                                   ? root[@"apps"] : nil;
+    NSArray *savedDisabled = [root[@"dashboardDisabled"] isKindOfClass:NSArray.class]
+                                  ? root[@"dashboardDisabled"] : @[];
+    NSMutableDictionary *apps = [savedApps mutableCopy] ?: [NSMutableDictionary new];
+    NSMutableArray<NSString *> *removed = [NSMutableArray new];
+    for (id key in savedApps.allKeys) {
+        if (![key isKindOfClass:NSString.class] || ![installedIdentifiers containsObject:key]) {
+            [apps removeObjectForKey:key];
+            if ([key isKindOfClass:NSString.class]) [removed addObject:key];
+        }
+    }
+    NSMutableArray *disabled = [savedDisabled mutableCopy];
+    NSMutableArray<NSString *> *removedDisabled = [NSMutableArray new];
+    for (id identifier in [savedDisabled copy]) {
+        if (![identifier isKindOfClass:NSString.class] ||
+            ![installedIdentifiers containsObject:identifier]) {
+            [disabled removeObject:identifier];
+            if ([identifier isKindOfClass:NSString.class]) [removedDisabled addObject:identifier];
+        }
+    }
+    if (removed.count == 0 && removedDisabled.count == 0) return;
+
+    NSMutableDictionary *updatedRoot = [root mutableCopy] ?: [NSMutableDictionary new];
+    if (apps.count > 0) {
+        updatedRoot[@"apps"] = apps;
+    } else {
+        [updatedRoot removeObjectForKey:@"apps"];
+    }
+    if (disabled.count > 0) {
+        updatedRoot[@"dashboardDisabled"] = disabled;
+    } else {
+        [updatedRoot removeObjectForKey:@"dashboardDisabled"];
+    }
+
+    NSError *error = nil;
+    NSData *data = [NSPropertyListSerialization dataWithPropertyList:updatedRoot
+                                                               format:NSPropertyListBinaryFormat_v1_0
+                                                              options:0
+                                                                error:&error];
+    if (!data || ![data writeToFile:kPrefsPath options:NSDataWritingAtomic error:&error]) {
+        CSLog("preference prune write failed: %s", error.localizedDescription.UTF8String);
+        return;
+    }
+    chmod(kPrefsPath.fileSystemRepresentation, 0644);
+
+    dispatch_barrier_sync(_queue, ^{
+        _root = updatedRoot;
+        [_optionsCache removeAllObjects];
+    });
+    notify_post(kChangeNotification.UTF8String);
+    if (removed.count > 0) {
+        CSLog("pruned %lu uninstalled app preference entr%s: %s",
+              (unsigned long)removed.count,
+              removed.count == 1 ? "y" : "ies",
+              [[removed componentsJoinedByString:@", "] UTF8String]);
+    }
+    if (removedDisabled.count > 0) {
+        CSLog("pruned %lu disabled-dashboard tombstone entr%s: %s",
+              (unsigned long)removedDisabled.count,
+              removedDisabled.count == 1 ? "y" : "ies",
+              [[removedDisabled componentsJoinedByString:@", "] UTF8String]);
+    }
+}
+
 - (BOOL)isEnabled {
     if (_safeMode) return NO;
     __block BOOL enabled = NO;
@@ -205,6 +319,15 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
             }
         }];
         result = ids;
+    });
+    return result;
+}
+
+- (NSArray<NSString *> *)dashboardDisabledBundleIdentifiers {
+    __block NSArray *result = @[];
+    dispatch_sync(_queue, ^{
+        id value = _root[@"dashboardDisabled"];
+        if ([value isKindOfClass:NSArray.class]) result = [value copy];
     });
     return result;
 }

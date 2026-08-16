@@ -60,11 +60,10 @@ entitlement (SIGKILL on every launch, phone and CarPlay alike, until
 reinstalled from the App Store), and once on a system app whose dedicated
 sandbox profile only grants after verifying a real Apple signature — no
 re-signing tool can fake that, and there was no fix short of restoring the
-bundle from the jailbreak's own system-app tooling. **System apps are hidden
-from the picker by default** for exactly that reason (`CARSURF_HIDE_SYSTEM_APPS`
-in the top-level `Makefile`; set to `0` to bring the section back — the
-daemon's own refusal for a dedicated-sandbox-profile app still applies
-either way, this only controls whether the picker offers one at all).
+bundle from the jailbreak's own system-app tooling. System apps are shown in
+the picker; the daemon's dedicated-sandbox and real-signature guard still
+refuses unsafe on-disk patching, while runtime admission can consider an enabled
+system app without filtering it out of Settings.
 
 An app that ships its own CarPlay interface is bridged too — that interface is
 usually a cut-down version of the app, and putting the real one on the head unit
