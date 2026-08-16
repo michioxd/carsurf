@@ -33,6 +33,15 @@ static NSUInteger gLastGoodIconCount;
 // until the enabled set changes or the library is invalidated.
 static NSMutableDictionary<NSString *, id> *gExpandedRosterCache;
 static id gExpandedRosterCacheLock;
+// Permanent strong references to every synthetic DBApplicationInfo we ever
+// inject into the CarPlay roster. DashBoard keeps its own (non-retaining or
+// unsafe) references to these entries while it resolves the icon-layout state;
+// freeing them on cache invalidation left those references dangling and CarPlay
+// crashed later with EXC_BAD_ACCESS / PAC failure in
+// -[DBIconLayoutVehicleDataProvider getIconStateWithCompletion:]. Pinning them
+// alive for the process lifetime removes the use-after-free. The set is tiny
+// (one entry per enabled app), so the leak is deliberate and bounded.
+static NSMutableArray *gPinnedRosterInfos;
 static void CSInvalidateExpandedRosterCache(void) {
     if (!gExpandedRosterCache) return;
     @synchronized (gExpandedRosterCacheLock) {
@@ -888,6 +897,62 @@ static void CSInvalidateCarPlayApplicationLibraries(void) {
     CSTimingLog("reload invalidation end objects=%lu", (unsigned long)invalidated);
 }
 
+// --- DBApplication carPlayDeclaration bridge -----------------------------------
+// The in-place dashboard mutation below loads a runtime-admitted app through
+// -[DBApplicationController _loadApplicationWithInfo:], which drives
+// -_updatePolicyForApplication:. On iOS 18.5 that sends -carPlayDeclaration to
+// the DBApplication, but the class does not implement it — only its -info (a
+// DBApplicationInfo) does — so the load aborted with
+//   -[DBApplication carPlayDeclaration]: unrecognized selector
+// and CarPlay crash-looped. Answer the selector by forwarding to the app's own
+// -info, which returns the exact declaration the runtime-admission factory built.
+//
+// This is the deliberate exception to CSRuntime's "never class_addMethod" rule:
+// the framework DOES send this selector and crashes when it is absent, so the
+// method is one the framework expects. class_getInstanceMethod guards it — if
+// the system ever provides the method (now or via a later-loaded category) we
+// install nothing and native behavior is kept.
+static id cs_dbApplicationCarPlayDeclaration(id self, SEL _cmd) {
+    SEL infoSelector = @selector(info);
+    if (![self respondsToSelector:infoSelector]) return nil;
+    id info = ((id (*)(id, SEL))objc_msgSend)(self, infoSelector);
+    SEL declarationSelector = @selector(carPlayDeclaration);
+    if (!info || ![info respondsToSelector:declarationSelector]) return nil;
+    return ((id (*)(id, SEL))objc_msgSend)(info, declarationSelector);
+}
+
+static void CSInstallDBApplicationDeclarationBridge(void) {
+    static BOOL installed = NO;
+    if (installed) return;
+    // DBApplication only exists in the CarPlay UI process; absent elsewhere.
+    Class dbApplication = objc_getClass("DBApplication");
+    if (!dbApplication) return;
+    SEL selector = @selector(carPlayDeclaration);
+    if (class_getInstanceMethod(dbApplication, selector)) {
+        installed = YES; // the system provides it — do not shadow it
+        return;
+    }
+    if (class_addMethod(dbApplication, selector,
+                        (IMP)cs_dbApplicationCarPlayDeclaration, "@@:")) {
+        installed = YES;
+        CSLog("installed DBApplication carPlayDeclaration bridge (forwards to -info)");
+    }
+}
+
+// Pin a dashboard object (DBApplicationInfo, or the DBApplication built from it)
+// for the process lifetime. DashBoard references these non-retained while it
+// resolves policy/icons; freeing them left dangling references and CarPlay
+// crashed with EXC_BAD_ACCESS / PAC failure. Shares gPinnedRosterInfos with the
+// FBS roster injection; all callers run on the main queue, so a plain nil-check
+// is sufficient. Bounded (one entry per enabled app).
+static void CSPinDashboardObject(id object) {
+    if (!object) return;
+    if (!gPinnedRosterInfos) gPinnedRosterInfos = [NSMutableArray new];
+    if (![gPinnedRosterInfos containsObject:object]) {
+        [gPinnedRosterInfos addObject:object];
+    }
+}
+
 /// Applies the enable/disable delta to DBApplicationController and notifies its
 /// observers so the CarPlay home grid updates in place. Returns YES when the
 /// change was fully handled incrementally (every enabled app inserted and every
@@ -933,22 +998,96 @@ static BOOL CSRefreshDashboardApplicationController(NSSet *previous) {
     id controller = ((id (*)(id, SEL))objc_msgSend)(controllerClass, sharedSelector);
     if (!controller) return NO;
 
-    // Do NOT mutate DBApplicationController here. Loading a runtime-admitted
-    // app into it (_loadApplicationWithInfo:/_didAddApplications:) drives
-    // -_updatePolicyForApplication:, which calls -carPlayDeclaration on the
-    // resulting DBApplication; our synthetic system-app entries do not answer
-    // that selector, so CarKit aborted with
-    //   -[DBApplication carPlayDeclaration]: unrecognized selector
-    // and CarPlay crash-looped on connect (which read as "enable reloads the
-    // screen" and left the dashboard/customize unusable). Enable/disable is
-    // driven entirely by the FBS roster expansion instead: an enabled app is
-    // injected into the library and appears when CarKit rebuilds the dashboard
-    // (respring or reconnect). The bookkeeping above still runs so that diff
-    // stays correct. Nothing was applied in place.
-    (void)controller;
-    CSTimingLog("dashboard roster refresh end added=%lu removed=%lu (roster-only)",
-                (unsigned long)added.count, (unsigned long)removed.count);
-    return NO;
+    // Mutate DBApplicationController in place and notify its observers so the
+    // grid re-renders WITHOUT a whole-library invalidation (which re-sorted the
+    // icons and reloaded the screen). The earlier attempt crashed because
+    // -_updatePolicyForApplication: sends -carPlayDeclaration to the
+    // DBApplication, which does not implement it; the bridge installed below
+    // forwards that to the app's own -info (which returns the declaration the
+    // runtime-admission factory built), so the load now succeeds.
+    CSInstallDBApplicationDeclarationBridge();
+
+    SEL loadSelector = @selector(_loadApplicationWithInfo:);
+    SEL appForIDSelector = @selector(applicationWithBundleIdentifier:);
+    SEL removeSelector = @selector(_removeApplicationWithBundleIdentifier:);
+    SEL didAddSelector = @selector(_didAddApplications:);
+    SEL didRemoveSelector = @selector(_didRemoveApplications:);
+    BOOL canLoad = [controller respondsToSelector:loadSelector];
+    BOOL canQuery = [controller respondsToSelector:appForIDSelector];
+    BOOL canRemove = [controller respondsToSelector:removeSelector];
+
+    // Add: load each newly enabled app's DBApplicationInfo, then collect the
+    // resulting DBApplication objects for the observer notification.
+    NSMutableArray *addedApps = [NSMutableArray new];
+    NSUInteger addsHandled = 0;
+    if (canLoad && canQuery) {
+        for (NSString *identifier in added) {
+            if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) continue;
+            if (CSRuntimeApplicationWasUninstalled(identifier)) continue;
+            id existing = ((id (*)(id, SEL, id))objc_msgSend)(controller,
+                                                              appForIDSelector, identifier);
+            if (existing) {           // a natural roster rebuild already placed it
+                CSPinDashboardObject(existing);
+                addsHandled++;
+                continue;
+            }
+            id proxy = CSApplicationProxyForIdentifier(identifier);
+            if (!proxy) {
+                CSLog("dashboard add skipped %s (no application proxy)", identifier.UTF8String);
+                continue;
+            }
+            id info = CSCreateDBApplicationInfoFromProxy(proxy);
+            if (!info) {
+                CSLog("dashboard add skipped %s (no DBApplicationInfo)", identifier.UTF8String);
+                continue;
+            }
+            ((void (*)(id, SEL, id))objc_msgSend)(controller, loadSelector, info);
+            id application = ((id (*)(id, SEL, id))objc_msgSend)(controller,
+                                                                 appForIDSelector, identifier);
+            if (!application) {
+                CSLog("dashboard add %s produced no DBApplication", identifier.UTF8String);
+                continue;
+            }
+            CSPinDashboardObject(info);
+            CSPinDashboardObject(application);
+            [addedApps addObject:application];
+            addsHandled++;
+            CSLog("dashboard added %s in place", identifier.UTF8String);
+        }
+    }
+
+    // Remove: capture the DBApplication before removal so the notifier carries it.
+    NSMutableArray *removedApps = [NSMutableArray new];
+    NSUInteger removesHandled = 0;
+    if (canRemove) {
+        for (NSString *identifier in removed) {
+            if (![identifier isKindOfClass:NSString.class] || identifier.length == 0) continue;
+            id application = canQuery
+                ? ((id (*)(id, SEL, id))objc_msgSend)(controller, appForIDSelector, identifier)
+                : nil;
+            ((void (*)(id, SEL, id))objc_msgSend)(controller, removeSelector, identifier);
+            if (application) [removedApps addObject:application];
+            removesHandled++;
+            CSLog("dashboard removed %s in place", identifier.UTF8String);
+        }
+    }
+
+    // The mutation alone never redraws the grid — the observer callback does
+    // (08-14 fact 1). Fire it with the changed applications.
+    if (addedApps.count > 0 && [controller respondsToSelector:didAddSelector]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(controller, didAddSelector, addedApps);
+        CSLog("dashboard notified _didAddApplications (%lu)", (unsigned long)addedApps.count);
+    }
+    if (removedApps.count > 0 && [controller respondsToSelector:didRemoveSelector]) {
+        ((void (*)(id, SEL, id))objc_msgSend)(controller, didRemoveSelector, removedApps);
+        CSLog("dashboard notified _didRemoveApplications (%lu)", (unsigned long)removedApps.count);
+    }
+
+    BOOL fullyHandled = (addsHandled == added.count) && (removesHandled == removed.count);
+    CSTimingLog("dashboard roster refresh end added=%lu/%lu removed=%lu/%lu (in-place)",
+                (unsigned long)addsHandled, (unsigned long)added.count,
+                (unsigned long)removesHandled, (unsigned long)removed.count);
+    return fullyHandled;
 }
 
 static NSArray *CSIconLayoutVehicleIdentifiers(id service) {
@@ -1467,21 +1606,90 @@ static id cs_iconLayoutServiceInitWithDelegate(id self, SEL _cmd, id delegate) {
     return service;
 }
 
+static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous);
+static NSSet *gPendingHiddenIconsDelta;
+
+// Extract a per-vehicle identifier from a live connection object. The live
+// icon-layout connection carries the vehicle UUID, which is the same id DashBoard
+// passes to fetch/setIconState. Capturing it here — before the first fetch —
+// closes the window where a toggle right after connect has no vehicle id.
+static id CSVehicleIdentifierFromConnection(id connection) {
+    if (!connection || connection == [NSNull null]) return nil;
+    SEL selectors[] = { @selector(vehicleID), @selector(vehicleIdentifier),
+                        @selector(identifier), sel_getUid("certificateSerial"),
+                        sel_getUid("serial") };
+    for (NSUInteger i = 0; i < sizeof(selectors) / sizeof(selectors[0]); i++) {
+        SEL selector = selectors[i];
+        if (![connection respondsToSelector:selector]) continue;
+        id value = ((id (*)(id, SEL))objc_msgSend)(connection, selector);
+        if (value && value != [NSNull null]) return value;
+    }
+    return nil;
+}
+
+// Fall back to the persisted per-vehicle icon-state plist filename. Its name is
+// "<vehicleUUID>-CarDisplayIconState.plist", so the UUID is readable even before
+// the live CRS/SBS connection is established — the CRS connection is intermittent
+// on the simulator, but the plist exists once a vehicle has connected at least
+// once. Prefer the most recently modified plist (the active vehicle).
+static NSString *CSPersistedVehicleIdentifier(void) {
+    NSString *dir = @"/var/mobile/Library/SpringBoard";
+    NSArray *files = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:nil];
+    NSString *suffix = @"-CarDisplayIconState.plist";
+    NSString *best = nil;
+    NSDate *bestDate = nil;
+    for (NSString *file in files) {
+        if (![file hasSuffix:suffix]) continue;
+        NSString *path = [dir stringByAppendingPathComponent:file];
+        NSDate *date = [[NSFileManager defaultManager] attributesOfItemAtPath:path
+                                                                        error:nil][NSFileModificationDate];
+        if (!date) continue;
+        if (!bestDate || [date compare:bestDate] == NSOrderedDescending) {
+            bestDate = date;
+            best = [file substringToIndex:file.length - suffix.length];
+        }
+    }
+    return best;
+}
+
+static void CSApplyPendingHiddenIconsDelta(void) {
+    if (!gPendingHiddenIconsDelta) return;
+    NSSet *pending = gPendingHiddenIconsDelta;
+    gPendingHiddenIconsDelta = nil;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CSApplyHiddenIconsDelta(pending);
+    });
+}
+
 static void (*orig_iconLayoutServiceDidReceiveConnection)(id, SEL, id, id, id);
 static void cs_iconLayoutServiceDidReceiveConnection(id self, SEL _cmd,
                                                      id listener, id connection, id context) {
     CSRememberIconLayoutService(self);
+    id vehicleID = CSVehicleIdentifierFromConnection(connection);
+    if (vehicleID) {
+        gLastIconLayoutVehicleID = vehicleID;
+        CSLog("CarPlay icon-layout captured vehicle id from connection %s",
+              [vehicleID description].UTF8String ?: "(nil)");
+    }
     CSLog("CarPlay icon-layout service received connection class=%s",
           connection ? object_getClassName(connection) : "(nil)");
     orig_iconLayoutServiceDidReceiveConnection(self, _cmd, listener, connection, context);
+    CSApplyPendingHiddenIconsDelta();
 }
 
 static void (*orig_iconLayoutServiceAddConnection)(id, SEL, id);
 static void cs_iconLayoutServiceAddConnection(id self, SEL _cmd, id connection) {
     CSRememberIconLayoutService(self);
+    id vehicleID = CSVehicleIdentifierFromConnection(connection);
+    if (vehicleID) {
+        gLastIconLayoutVehicleID = vehicleID;
+        CSLog("CarPlay icon-layout captured vehicle id from add-connection %s",
+              [vehicleID description].UTF8String ?: "(nil)");
+    }
     CSLog("CarPlay icon-layout service queue add connection class=%s",
           connection ? object_getClassName(connection) : "(nil)");
     orig_iconLayoutServiceAddConnection(self, _cmd, connection);
+    CSApplyPendingHiddenIconsDelta();
 }
 
 static void (*orig_iconLayoutServiceRemoveConnection)(id, SEL, id);
@@ -1518,6 +1726,7 @@ static void cs_iconLayoutControllerSetConnection(id self, SEL _cmd, id connectio
 
 static void cs_iconLayoutSetState(id self, SEL _cmd, id state, id vehicleID) {
     if (vehicleID && vehicleID != [NSNull null]) gLastIconLayoutVehicleID = vehicleID;
+    CSApplyPendingHiddenIconsDelta();
     CSLog("CarPlay icon-layout set state process=%s vehicle=%s state=%s",
           NSProcessInfo.processInfo.processName.UTF8String,
           [vehicleID description].UTF8String ?: "(nil)",
@@ -1543,6 +1752,7 @@ static void (*orig_iconLayoutSetOrder)(id, SEL, id, id, id);
 static void cs_iconLayoutFetchState(id self, SEL _cmd, id vehicleID, id completion,
                                     void (*original)(id, SEL, id, id)) {
     if (vehicleID && vehicleID != [NSNull null]) gLastIconLayoutVehicleID = vehicleID;
+    CSApplyPendingHiddenIconsDelta();
     CSLog("CarPlay icon-layout fetch state process=%s vehicle=%s",
           NSProcessInfo.processInfo.processName.UTF8String,
           [vehicleID description].UTF8String ?: "(nil)");
@@ -1741,6 +1951,33 @@ static id CSStateWithHiddenDelta(id state, NSSet<NSString *> *disabled,
         }
     }
 
+    // Fresh enable: an enabled app that is nowhere in the layout (not in any page,
+    // not hidden) needs its icon OBJECT created and appended — the roster injection
+    // alone leaves the grid without it, so hide/unhide would no-op. Build a
+    // CRSApplicationIcon from the bundle identifier and add it to the last page.
+    for (NSString *bid in enabled) {
+        if (bid.length == 0 || CSLayoutStateContainsBundle(state, bid)) continue;
+        Class iconClass = CSLookupClass("CRSApplicationIcon");
+        SEL iconInit = @selector(initWithBundleIdentifier:);
+        if (!iconClass || ![iconClass instancesRespondToSelector:iconInit]) continue;
+        id icon = ((id (*)(id, SEL, id))objc_msgSend)([iconClass alloc], iconInit, bid);
+        if (!icon) continue;
+        NSMutableArray *allIcons = [NSMutableArray new];
+        if (newPages.count > 0) {
+            id lastPage = newPages.lastObject;
+            id lastIcons = [lastPage respondsToSelector:@selector(icons)]
+                ? ((id (*)(id, SEL))objc_msgSend)(lastPage, @selector(icons)) : nil;
+            if ([lastIcons isKindOfClass:NSArray.class]) [allIcons addObjectsFromArray:lastIcons];
+        }
+        [allIcons addObject:icon];
+        id rebuilt = ((id (*)(id, SEL, id))objc_msgSend)([pageClass alloc], pageInit, allIcons);
+        if (!rebuilt) continue;
+        if (newPages.count > 0) [newPages replaceObjectAtIndex:newPages.count - 1 withObject:rebuilt];
+        else [newPages addObject:rebuilt];
+        changed = YES;
+        CSLog("hiddenIcons sync: adding %s (fresh enable)", bid.UTF8String);
+    }
+
     if (!changed) return nil;
     id newState = ((id (*)(id, SEL, id, id))objc_msgSend)([stateClass alloc], stateInit,
                                                            newPages, hidden);
@@ -1783,36 +2020,25 @@ static void CSApplyHiddenDeltaToService(id service, id vehicleID,
     ((void (*)(id, SEL, id, id))objc_msgSend)(service, fetchSel, vehicleID, completion);
 }
 
-// A refresh needs the heavy roster rebuild (which reloads the CarPlay screen)
-// ONLY when an app is being enabled that is not already present anywhere in the
-// vehicle's layout — a genuinely new dashboard icon. Pure disables and
-// re-enables of apps already in the layout are handled live by the hiddenIcons
-// sync, so those must NOT invalidate the library (that was the screen reload).
-// Errs toward YES (rebuild) when the layout state is unknown, so a real new app
-// can never be stranded.
-static BOOL CSDeltaNeedsRosterRebuild(NSSet<NSString *> *previous) {
-    // Only CarPlay.app renders the dashboard grid and owns the icon-layout state,
-    // so it is the only process whose library invalidation reloads the screen and
-    // the only one that can tell a fresh enable from a re-enable. SpringBoard and
-    // CarPlayTemplateUIHost must never force a roster rebuild for a toggle — that
-    // was the residual screen reload after the CarPlay-side gating.
-    if (![NSProcessInfo.processInfo.processName isEqualToString:@"CarPlay"]) return NO;
-    previous = previous ?: [NSSet set];
-    NSSet *current = CSRuntimeEnabledIdentifierSet();
-    NSMutableSet<NSString *> *enabled = [current mutableCopy];
-    [enabled minusSet:previous];
-    if (enabled.count == 0) return NO;           // pure disable → live, no reload
-    if (!gLastGoodIconState) return YES;         // layout unknown → be safe
-    for (NSString *bid in enabled) {
-        if (!CSLayoutStateContainsBundle(gLastGoodIconState, bid)) {
-            return YES;                          // a truly new icon needs a rebuild
-        }
-    }
-    return NO;                                    // all re-enables → live un-hide
-}
-
 // Drive the hiddenIcons delta across the tracked icon-layout services (the live
 // writer on iOS 18.5). Runs only in a CarPlay UI process that owns the graph.
+static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous);
+static NSUInteger gHiddenIconsSyncRetries;
+// The first toggle right after connect sees no vehicle identifier (the live
+// connection is still establishing, so gLastIconLayoutVehicleID /
+// gLastVehicleIdentifier are nil and the service's connections hash is empty).
+// Retry the same delta a few times so that first toggle is not silently lost.
+static void CSRetryHiddenIconsDelta(NSSet<NSString *> *previous) {
+    if (gHiddenIconsSyncRetries >= 6) { gHiddenIconsSyncRetries = 0; return; }
+    gHiddenIconsSyncRetries++;
+    CSLog("hiddenIcons sync: no vehicle id yet — retrying in 1.5s (%lu/6)",
+          (unsigned long)gHiddenIconsSyncRetries);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        CSApplyHiddenIconsDelta(previous);
+    });
+}
+
 static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous) {
     if (!CSHiddenIconsSyncEnabled() || !CSIsIconLayoutProcess()) return;
     previous = previous ?: [NSSet set];
@@ -1821,7 +2047,13 @@ static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous) {
     [disabled minusSet:current];
     NSMutableSet<NSString *> *enabled = [current mutableCopy];
     [enabled minusSet:previous];
-    if (disabled.count == 0 && enabled.count == 0) return;
+    if (disabled.count == 0 && enabled.count == 0) {
+        CSLog("hiddenIcons sync: no delta (previous=%lu current=%lu prev=[%s] cur=[%s])",
+              (unsigned long)previous.count, (unsigned long)current.count,
+              [[previous.allObjects componentsJoinedByString:@","] UTF8String] ?: "",
+              [[current.allObjects componentsJoinedByString:@","] UTF8String] ?: "");
+        return;
+    }
     CSLog("hiddenIcons sync: delta disabled=%lu enabled=%lu",
           (unsigned long)disabled.count, (unsigned long)enabled.count);
 
@@ -1840,6 +2072,7 @@ static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous) {
               NSProcessInfo.processInfo.processName.UTF8String);
         return;
     }
+    BOOL applied = NO;
     for (id service in services) {
         NSArray *vehicleIdentifiers = CSIconLayoutVehicleIdentifiers(service);
         if (vehicleIdentifiers.count == 0 && gLastIconLayoutVehicleID) {
@@ -1849,13 +2082,29 @@ static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous) {
             vehicleIdentifiers = @[ gLastVehicleIdentifier ];
         }
         if (vehicleIdentifiers.count == 0) {
+            NSString *persisted = CSPersistedVehicleIdentifier();
+            if (persisted) {
+                vehicleIdentifiers = @[ persisted ];
+                CSLog("hiddenIcons sync: using persisted vehicle id %s",
+                      persisted.UTF8String);
+            }
+        }
+        if (vehicleIdentifiers.count == 0) {
             CSLog("hiddenIcons sync: service %s has no vehicle identifier",
                   object_getClassName(service));
             continue;
         }
         for (id vehicleID in vehicleIdentifiers) {
             CSApplyHiddenDeltaToService(service, vehicleID, disabled, enabled);
+            applied = YES;
         }
+    }
+    if (applied) {
+        gHiddenIconsSyncRetries = 0;
+        gPendingHiddenIconsDelta = nil;
+    } else {
+        gPendingHiddenIconsDelta = previous;
+        CSRetryHiddenIconsDelta(previous);
     }
 }
 
@@ -1890,20 +2139,21 @@ static void CSInstallCarPlayApplicationLibraryRefresh(void) {
             // re-enables of apps already in the layout, the hiddenIcons live sync
             // below updates the grid in place — so skip the invalidation there and
             // the screen no longer reloads on every toggle.
-            BOOL needRebuild = CSDeltaNeedsRosterRebuild(previous);
-            if (needRebuild) {
-                CSLog("reload: fresh enable present — rebuilding roster (screen reflow)");
-                CSInvalidateCarPlayApplicationLibraries();
-            } else {
-                CSTimingLog("reload: live hiddenIcons sync only (no roster rebuild)");
+            // The whole-library invalidation (screen reflow + alphabetical
+            // re-sort) is retired for enable/disable toggles: the in-place
+            // DBApplicationController mutation updates the grid without it. A
+            // forced rebuild remains only for genuine uninstalls (handled in the
+            // uninstall hook), never for a toggle.
+            BOOL handledInPlace = CSRefreshDashboardApplicationController(previous);
+            if (!handledInPlace) {
+                CSLog("reload: in-place dashboard mutation incomplete — no forced "
+                      "rebuild; the app lands on the next natural roster query");
             }
-            CSRefreshDashboardApplicationController(previous);
             // Move the disable/enable delta through the sanctioned Customize
             // writer (hiddenIcons): hides a disabled app / un-hides a re-enabled
             // one live, without emptying the Customize list. Sees the pre-baseline
             // `previous` set.
             CSApplyHiddenIconsDelta(previous);
-            if (needRebuild) CSRefreshDashboardIconLayout();
             CSTimingLog("reload refresh dispatch end");
         });
     };
@@ -2212,6 +2462,8 @@ static id cs_allInstalledApplications(id self, SEL _cmd) {
                 [presentIdentifiers addObject:identifier];
                 @synchronized (gExpandedRosterCacheLock) {
                     gExpandedRosterCache[identifier] = info;
+                    if (!gPinnedRosterInfos) gPinnedRosterInfos = [NSMutableArray new];
+                    [gPinnedRosterInfos addObject:info];
                 }
                 CSLog("CarPlay FBS roster admitted DBApplicationInfo %s in memory (%lu -> %lu)",
                       identifier.UTF8String, (unsigned long)[result count],

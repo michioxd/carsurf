@@ -1,6 +1,6 @@
 include $(THEOS)/makefiles/common.mk
 
-TOOL_NAME = carsurf-audit carsurf-classes carsurf-prefstest carsurf-apps
+TOOL_NAME = carsurf-audit carsurf-classes carsurf-prefstest carsurf-apps carsurf-notify
 
 carsurf-audit_FILES = carsurf-audit.m
 carsurf-audit_CFLAGS = -fobjc-arc
@@ -26,9 +26,15 @@ carsurf-apps_FRAMEWORKS = Foundation
 carsurf-apps_INSTALL_PATH = /usr/local/bin
 carsurf-apps_CODESIGN_FLAGS = -Sentitlements.plist
 
+carsurf-notify_FILES = np.m
+carsurf-notify_INSTALL_PATH = /usr/local/bin
+carsurf-notify_CODESIGN_FLAGS = -Sentitlements.plist
+
 include $(THEOS_MAKE_PATH)/tool.mk
 
 internal-stage::
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/usr/local/bin"$(ECHO_END)
 	$(ECHO_NOTHING)cp carsurf-logs.sh "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-logs"$(ECHO_END)
 	$(ECHO_NOTHING)chmod 755 "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-logs"$(ECHO_END)
+	$(ECHO_NOTHING)cp carsurf-vehicle.sh "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-vehicle"$(ECHO_END)
+	$(ECHO_NOTHING)chmod 755 "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-vehicle"$(ECHO_END)

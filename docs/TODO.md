@@ -1,0 +1,35 @@
+# CarSurf — TODO
+
+Open items, newest and most urgent first. Sources: roadmap "Way out", memory notes, and the 2026-08-16 device audit.
+
+## Fixed (2026-08-16, build 0.1.4-27) — user-verified on the CarPlay screen
+
+- **Fresh-enable live-sync without the reload.** Enable/disable now mutates `DBApplicationController` in place (`_loadApplicationWithInfo:` / `_removeApplicationWithBundleIdentifier:`) and fires `_didAddApplications:` / `_didRemoveApplications:` — the grid re-renders live with **no** `FBSApplicationLibrary` invalidation, **no** screen reflow, **no** alphabetical re-sort. Verified on the Simulator (7245D718) and confirmed on-screen by the user via UI toggles after a userspace restart: 15 in-place events, 0 `unrecognized selector` / `EXC_BAD_ACCESS` / PAC, CarPlay on one pid throughout.
+- **The `carPlayDeclaration` crash.** `_updatePolicyForApplication:` sends `carPlayDeclaration` to the `DBApplication`, which does not implement it (only its `-info`, a `DBApplicationInfo`, does). A guarded `class_addMethod` bridge forwards it to `-[DBApplicationInfo carPlayDeclaration]` — the declaration the runtime-admission factory built. The `class_getInstanceMethod` guard keeps native behavior if the system ever provides it. (Deliberate, documented exception to CSRuntime's "never class_addMethod" rule: the framework sends this selector and crashes when it is absent.)
+- **The roster-rebuild reload is retired for toggles.** `CSDeltaNeedsRosterRebuild` removed; whole-library invalidation now only happens on genuine uninstall.
+
+## Crashes (top priority)
+
+- [ ] **PAC crash — improved, pending a connected-car test.** Synthetic roster entries are pinned alive (`gPinnedRosterInfos`), and the in-place path pins the `DBApplicationInfo` + `DBApplication` it loads. No crash in Simulator toggle testing. Still needs a LYNK&CO connected-car run to confirm.
+- [ ] **Customize-empty-on-relaunch** — DashBoard's *own* `setIconState` writes an empty `pages[0]` (0 icons) at startup. Distinct icon-state issue; do NOT block DashBoard's writes (that started the PAC loop) and do NOT reconstruct-and-serve a state. Candidate: read-side guard serving the pinned `gLastGoodIconState` on fetch.
+
+## Live sync (the core feature)
+
+- [ ] **NEW: CarPlay screen reloads when entering the Customize list.** Reported right after the in-place fix landed. Capture what fires on Customize entry (roster reconcile? icon-state fetch/rewrite? controller `_loadApplications:removeApplications:`?) before changing anything.
+- [ ] **First toggle right after connect — likely fixed, verify.** The in-place add/remove goes through `DBApplicationController` (no vehicle ID needed), so the old vehicle-ID timing gap (Way out #3) should no longer drop the first toggle. Confirm on a fresh Simulator connect. (The hiddenIcons sync path still needs the vehicle ID, so the gap remains for hide/unhide.)
+- [ ] **DashBoard reconciles our hidden write** back to all-visible in ~2 min (Way out #2). Now that add/remove is in place via the controller, re-check whether this still bites.
+- [ ] **Dashboard refresh storm** — `refresh notification → reload invalidation → relay updated` oscillation. The invalidation is gone from the toggle path; re-check.
+- [ ] **com.apple.camera spurious remove** seen once at 16:12:02 — baseline diff produced a remove for an app not in the enabled set. Watch.
+
+## Scene bridge
+
+- [ ] **`multiScene=0`** — `UIApplicationSceneManifest` is missing on iOS 18.5, so the multi-scene hooks never install; only single-scene bridging works.
+
+## Tooling / hygiene
+
+- [ ] **helperd never backs up the executable** — only Info.plist + entitlements; a damaged binary means App Store reinstall (Way out #4).
+- [ ] **README install glob** still lands on stale `0.2.0-1-93` (Way out #5).
+
+## North star (unchanged)
+
+Runtime admission only — no on-disk app mutation, no trustcache, no per-app dylib. The version that survives App Store updates. The on-disk and runtime paths coexist until runtime covers every app.

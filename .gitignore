@@ -25,3 +25,7 @@ Main-VideoStream-*.png
 
 # fnm (node version manager) per-shell temp file
 .fnm_multishells
+
+# Machine output from device-audit.sh — megabytes per run, findings already
+# captured in docs/TODO.md.
+docs/audits/
