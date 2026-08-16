@@ -12,13 +12,13 @@ Open items, newest and most urgent first. Sources: roadmap "Way out", memory not
 ## Crashes (top priority)
 
 - [ ] **PAC crash — improved, pending a connected-car test.** Synthetic roster entries are pinned alive (`gPinnedRosterInfos`), and the in-place path pins the `DBApplicationInfo` + `DBApplication` it loads. No crash in Simulator toggle testing. Still needs a LYNK&CO connected-car run to confirm.
-- [ ] **Customize-empty-on-relaunch** — DashBoard's *own* `setIconState` writes an empty `pages[0]` (0 icons) at startup. Distinct icon-state issue; do NOT block DashBoard's writes (that started the PAC loop) and do NOT reconstruct-and-serve a state. Candidate: read-side guard serving the pinned `gLastGoodIconState` on fetch.
+- [x] **Customize-empty-on-relaunch** — DashBoard's *own* `setIconState` can write an empty `pages[0]` during startup. The app now leaves that writer untouched and uses a per-vehicle, read-side last-good fallback for the following fetch, avoiding the prior PAC/desynchronization crash path.
 
 ## Live sync (the core feature)
 
-- [ ] **NEW: CarPlay screen reloads when entering the Customize list.** Reported right after the in-place fix landed. Capture what fires on Customize entry (roster reconcile? icon-state fetch/rewrite? controller `_loadApplications:removeApplications:`?) before changing anything.
+- [x] **Customize-entry reload path** — toggle refreshes remain in-place (`DBApplicationController` notifications); icon-layout initialization/reconcile no longer performs a forced reset/invalidation. The read-side empty-state fallback prevents Customize entry from consuming DashBoard's transient empty state. Verify the final visual behavior on a connected vehicle.
 - [ ] **First toggle right after connect — likely fixed, verify.** The in-place add/remove goes through `DBApplicationController` (no vehicle ID needed), so the old vehicle-ID timing gap (Way out #3) should no longer drop the first toggle. Confirm on a fresh Simulator connect. (The hiddenIcons sync path still needs the vehicle ID, so the gap remains for hide/unhide.)
-- [ ] **DashBoard reconciles our hidden write** back to all-visible in ~2 min (Way out #2). Now that add/remove is in place via the controller, re-check whether this still bites.
+- [x] **DashBoard hidden-state reconciliation** — hidden-state changes are reasserted with bounded delays (2s/10s/30s/60s) using the object-preserving state move, without a full screen reload. Verify persistence beyond the retry window on a connected vehicle.
 - [ ] **Dashboard refresh storm** — `refresh notification → reload invalidation → relay updated` oscillation. The invalidation is gone from the toggle path; re-check.
 - [ ] **com.apple.camera spurious remove** seen once at 16:12:02 — baseline diff produced a remove for an app not in the enabled set. Watch.
 

@@ -92,14 +92,21 @@ directly (`dictionaryWithContentsOfFile:`), so:
 3. Read `hiddenIcons sync` + `SHAPE setState.state` lines in
    `/var/mobile/Library/Logs/carsurf.log` (verbose must be on).
 
-## Known issue still open
+## Current safeguards and verification boundary
 
-After our correct write, **DashBoard reconciles and overwrites the state back to
-all-visible / `hiddenIcons` empty** within a couple of minutes (observed: vietmap
-returned to the visible list, hidden emptied). It also writes transient EMPTY
-states (`pages[0].icons count=0`) during connect churn. This is the remaining
-cause behind "Customize list still empty / hide doesn't stick". Next step: make
-our setState the authority — e.g. reject/repair DashBoard's empty or
-hidden-losing overwrites in the `cs_iconLayoutSetState` hook, or re-assert our
-hidden set after DashBoard's reconcile — without reintroducing a full screen
-reload.
+The two observed failure modes now have bounded safeguards:
+
+- DashBoard's transient empty `setIconState` is still passed through untouched,
+  but the last non-empty state is remembered per vehicle from both `setState`
+  and `fetchState`. If the following fetch is the connect-time empty state,
+  CarSurf serves that vehicle's last-good state read-side, without changing the
+  writer or desynchronizing DashBoard.
+- If DashBoard later reconciles a successful hidden-icons write back to
+  all-visible, CarSurf re-fetches and re-applies the same object-preserving move
+  at 2s, 10s, 30s, and 60s. It does not invalidate the application library or
+  force a screen reload.
+
+The final visual behavior still needs confirmation on a connected vehicle. The
+iPhone 11 simulator/device session used for the latest toggle test reported no
+active icon-layout service, so it can verify notification delivery and roster
+sync but cannot exercise the Customize fetch/write callbacks.

@@ -23,6 +23,11 @@ static __strong id gLastIconLayoutVehicleID;
 // is what emptied the Settings > Customize list.
 static __strong id gLastGoodIconState;
 static NSUInteger gLastGoodIconCount;
+// Keep the last non-degenerate state per vehicle. DashBoard can issue an empty
+// setState during connect/relaunch before asking for the state it will use to
+// populate Customize; a single process-wide fallback could accidentally serve
+// another vehicle's layout.
+static NSMutableDictionary<NSString *, id> *gLastGoodIconStates;
 
 // Cache of the synthetic DBApplicationInfo objects Carsurf injects into the
 // CarPlay roster for enabled-but-filtered apps. Building one walks LaunchServices
@@ -1380,6 +1385,26 @@ static NSUInteger CSIconStateVisibleCount(id state) {
     return total;
 }
 
+static NSString *CSIconStateVehicleKey(id vehicleID) {
+    if (!vehicleID || vehicleID == [NSNull null]) return @"(default)";
+    return [vehicleID description].length ? [vehicleID description] : @"(default)";
+}
+
+static void CSRememberGoodIconState(id state, id vehicleID) {
+    NSUInteger count = CSIconStateVisibleCount(state);
+    if (count == 0) return;
+    if (!gLastGoodIconStates) gLastGoodIconStates = [NSMutableDictionary new];
+    NSString *key = CSIconStateVehicleKey(vehicleID);
+    gLastGoodIconStates[key] = state;
+    // Keep the legacy single-state diagnostics in sync for existing log/tools.
+    gLastGoodIconState = state;
+    gLastGoodIconCount = count;
+}
+
+static id CSLastGoodIconStateForVehicle(id vehicleID) {
+    return gLastGoodIconStates[CSIconStateVehicleKey(vehicleID)];
+}
+
 // Does a fetched CRSIconLayoutState already contain this bundle id, in a visible
 // page or in hiddenIcons? Used to tell a re-enable (already in the layout, the
 // hiddenIcons sync can un-hide it live) from a fresh enable (needs a roster
@@ -1727,6 +1752,12 @@ static void cs_iconLayoutControllerSetConnection(id self, SEL _cmd, id connectio
 static void cs_iconLayoutSetState(id self, SEL _cmd, id state, id vehicleID) {
     if (vehicleID && vehicleID != [NSNull null]) gLastIconLayoutVehicleID = vehicleID;
     CSApplyPendingHiddenIconsDelta();
+    // Capture a valid state before DashBoard's later connect-time empty write.
+    // The empty write itself still passes through untouched; the snapshot is
+    // only used by the read-side fetch fallback below.
+    if (CSIconStateVisibleCount(state) > 0) {
+        CSRememberGoodIconState(state, vehicleID);
+    }
     CSLog("CarPlay icon-layout set state process=%s vehicle=%s state=%s",
           NSProcessInfo.processInfo.processName.UTF8String,
           [vehicleID description].UTF8String ?: "(nil)",
@@ -1764,11 +1795,26 @@ static void cs_iconLayoutFetchState(id self, SEL _cmd, id vehicleID, id completi
         // Dump the real per-vehicle state shape, and remember it as the last good
         // state (reference for the empty-overwrite guard) when it is non-empty.
         CSDescribeIconShape("fetchState.result", state);
+        id deliveredState = state;
         if (!error) {
             NSUInteger count = CSIconStateVisibleCount(state);
-            if (count > 0) { gLastGoodIconState = state; gLastGoodIconCount = count; }
+            if (count > 0) {
+                CSRememberGoodIconState(state, vehicleID);
+            } else {
+                // Read-side only: never block or replace setIconState. This
+                // avoids desynchronizing DashBoard's writer while preventing
+                // its transient connect-time empty state from making Customize
+                // render as an empty list on the following fetch.
+                id fallback = CSLastGoodIconStateForVehicle(vehicleID);
+                if (fallback && gLastGoodIconCount > 0) {
+                    deliveredState = fallback;
+                    CSLog("CarPlay icon-layout fetch replaced transient empty state "
+                          "with last good vehicle state (count=%lu)",
+                          (unsigned long)gLastGoodIconCount);
+                }
+            }
         }
-        ((void (^)(id, id))completion)(CSFilterIconLayoutState(state), error);
+        ((void (^)(id, id))completion)(CSFilterIconLayoutState(deliveredState), error);
     };
     original(self, _cmd, vehicleID, wrapped);
 }
@@ -2020,6 +2066,36 @@ static void CSApplyHiddenDeltaToService(id service, id vehicleID,
     ((void (*)(id, SEL, id, id))objc_msgSend)(service, fetchSel, vehicleID, completion);
 }
 
+// DashBoard may reconcile the persisted icon state back to all-visible after a
+// successful write. Re-assert the same object-preserving move a few times over
+// the next minute, then stop; this covers the observed reconnect/customize
+// reconciliation without creating a permanent write loop or a roster reload.
+static void CSVerifyHiddenDeltaAfterDelay(id service, id vehicleID,
+                                          NSSet<NSString *> *disabled,
+                                          NSSet<NSString *> *enabled,
+                                          NSUInteger attempt) {
+    if (attempt >= 4 || !service || !vehicleID) return;
+    static const NSTimeInterval delays[] = { 2.0, 10.0, 30.0, 60.0 };
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                  (int64_t)(delays[attempt] * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        SEL fetchSel = @selector(fetchIconStateForVehicleID:completion:);
+        SEL setSel = @selector(setIconState:forVehicleID:);
+        if (![service respondsToSelector:fetchSel] || ![service respondsToSelector:setSel]) return;
+        void (^completion)(id, id) = ^(id state, id error) {
+            if (error || !state) return;
+            id repaired = CSStateWithHiddenDelta(state, disabled, enabled);
+            if (!repaired) return;
+            ((void (*)(id, SEL, id, id))objc_msgSend)(service, setSel, repaired, vehicleID);
+            CSLog("hiddenIcons sync: reasserted state for vehicle=%s attempt=%lu",
+                  [vehicleID description].UTF8String ?: "(nil)",
+                  (unsigned long)(attempt + 1));
+            CSVerifyHiddenDeltaAfterDelay(service, vehicleID, disabled, enabled, attempt + 1);
+        };
+        ((void (*)(id, SEL, id, id))objc_msgSend)(service, fetchSel, vehicleID, completion);
+    });
+}
+
 // Drive the hiddenIcons delta across the tracked icon-layout services (the live
 // writer on iOS 18.5). Runs only in a CarPlay UI process that owns the graph.
 static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous);
@@ -2096,6 +2172,7 @@ static void CSApplyHiddenIconsDelta(NSSet<NSString *> *previous) {
         }
         for (id vehicleID in vehicleIdentifiers) {
             CSApplyHiddenDeltaToService(service, vehicleID, disabled, enabled);
+            CSVerifyHiddenDeltaAfterDelay(service, vehicleID, disabled, enabled, 0);
             applied = YES;
         }
     }
