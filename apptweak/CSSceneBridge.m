@@ -99,13 +99,12 @@ static BOOL CSMustLeaveRoleAlone(NSString *role) {
 }
 
 static BOOL CSBridgingEnabledForThisApp(void) {
-    static BOOL enabled;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
-        enabled = [CSConfig.sharedConfig isBundleEnabled:bundleID];
-    });
-    return enabled;
+    // This is deliberately a live read. The preferences process can remove an
+    // app from the allowlist while its process is still hosting a CarPlay
+    // scene; caching the first answer would let later CarPlay roles keep being
+    // rewritten after the toggle was turned off.
+    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier;
+    return [CSConfig.sharedConfig isBundleEnabled:bundleID];
 }
 
 static id (*orig_initWithNameSessionRole)(id, SEL, NSString *, NSString *);

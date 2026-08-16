@@ -149,6 +149,26 @@ static void CSAppInit(void) {
             exit(0);
         });
 
+        // A config notification updates the dashboard roster, but it cannot
+        // revoke a scene that UIKit has already connected to this process.
+        // Re-read after the relay writer and CSConfig's observer have settled;
+        // if this process is actually on the car, exiting lets CarPlay tear down
+        // the stale bridged scene. A phone-only app is left untouched.
+        int configToken = 0;
+        notify_register_dispatch(CSConfig.changeNotificationName.UTF8String,
+                                 &configToken, dispatch_get_main_queue(), ^(int token) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                          (int64_t)(0.5 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                [config reload];
+                if (CSHasActiveCarScene() &&
+                    (!config.isEnabled || ![config isBundleEnabled:bundleID])) {
+                    CSLog("config disabled while CarPlay scene is active; exiting app");
+                    exit(0);
+                }
+            });
+        });
+
         // A native app should be handed a plain CarPlay window scene, because
         // CSSceneManifestSpoof.m hides its template roles and template
         // entitlements from CarPlay. If a template scene turns up regardless,
