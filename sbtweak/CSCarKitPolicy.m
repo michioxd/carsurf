@@ -1787,6 +1787,8 @@ static void (*orig_iconLayoutServiceRemoveConnection)(id, SEL, id);
 static void cs_iconLayoutServiceRemoveConnection(id self, SEL _cmd, id connection) {
     CSLog("CarPlay icon-layout service queue remove connection class=%s",
           connection ? object_getClassName(connection) : "(nil)");
+    for (NSString *frame in NSThread.callStackSymbols) CSLog("icon-layout remove caller %s",
+                                                              frame.UTF8String);
     orig_iconLayoutServiceRemoveConnection(self, _cmd, connection);
 }
 
@@ -1853,6 +1855,9 @@ static void cs_iconLayoutSetState(id self, SEL _cmd, id state, id vehicleID) {
           [vehicleID description].UTF8String ?: "(nil)",
           state ? object_getClassName(state) : "(nil)");
     CSDescribeIconShape("setState.state", state);
+    CSDescribeIconShape("setState.nativePayload", stateToWrite);
+    for (NSString *frame in NSThread.callStackSymbols) CSLog("icon-layout set caller %s",
+                                                              frame.UTF8String);
 
     // Do not block DashBoard's writer. The only intervention is the
     // object-preserving, per-vehicle fallback above for its transient empty
@@ -1948,9 +1953,16 @@ static void CSInstallIconLayoutStateHooks(void) {
         CSSwizzleInstanceMethod(service, @selector(setIconState:forVehicleID:),
                                  (IMP)cs_iconLayoutSetState,
                                  (IMP *)&orig_iconLayoutSetState);
-        CSSwizzleInstanceMethod(service, @selector(fetchIconStateForVehicleID:completion:),
-                                 (IMP)cs_iconLayoutServiceFetchState,
-                                 (IMP *)&orig_iconLayoutServiceFetchState);
+        // Isolation switch: the native fetch path is crashing before/around
+        // the completion callback on the connected device. Leave the native
+        // fetch untouched for one run to distinguish a CRS wrapper fault from
+        // the underlying persisted state.
+        static const BOOL kDisableFetchWrapperForIsolation = YES;
+        if (!kDisableFetchWrapperForIsolation) {
+            CSSwizzleInstanceMethod(service, @selector(fetchIconStateForVehicleID:completion:),
+                                     (IMP)cs_iconLayoutServiceFetchState,
+                                     (IMP *)&orig_iconLayoutServiceFetchState);
+        }
     }
     Class controller = CSLookupClass("CRSIconLayoutController");
     if (controller) {
@@ -1963,9 +1975,12 @@ static void CSInstallIconLayoutStateHooks(void) {
         CSSwizzleInstanceMethod(controller, @selector(setIconOrder:hiddenIcons:forVehicleID:),
                                  (IMP)cs_iconLayoutSetOrder,
                                  (IMP *)&orig_iconLayoutSetOrder);
-        CSSwizzleInstanceMethod(controller, @selector(fetchIconStateForVehicleID:completion:),
-                                 (IMP)cs_iconLayoutControllerFetchState,
-                                 (IMP *)&orig_iconLayoutControllerFetchState);
+        static const BOOL kDisableFetchWrapperForIsolation = YES;
+        if (!kDisableFetchWrapperForIsolation) {
+            CSSwizzleInstanceMethod(controller, @selector(fetchIconStateForVehicleID:completion:),
+                                     (IMP)cs_iconLayoutControllerFetchState,
+                                     (IMP *)&orig_iconLayoutControllerFetchState);
+        }
     }
     if (service || controller) installed = YES;
 }

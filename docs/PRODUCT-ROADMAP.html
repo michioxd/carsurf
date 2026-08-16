@@ -480,6 +480,34 @@ li.hmeta b{color:var(--ink)}
     </div>
   </section>
 
+  <!-- 08-16 -->
+  <section class="day">
+    <div class="datecol">
+      <span class="date">08-16<span class="dow">Sunday</span></span>
+      <span class="range">connected simulator · iOS 18.5</span>
+      <span class="phase live">runtime admission + crash isolation</span>
+    </div>
+    <div class="content">
+      <h3>CODEX · separate the stable reactive path from icon-state failures</h3>
+      <div class="entry win">
+        <span class="meta">verified · builds 27-10 → 27-12 · iPhone 11 simulator</span>
+        <p><b>Enable/disable remains reactive.</b> With runtime roster admission enabled, CarSurf apps (YouTube, Stocks, Notes, ChargeLimiter and others) are admitted and appear on the CarPlay dashboard. Customize entry no longer causes the earlier visible reload when the CRS fetch interception is disabled.</p>
+      </div>
+      <div class="entry wall">
+        <span class="meta">wall · launchd + CarPlay logs · 21:32–21:49</span>
+        <p><b>CRS fetch interception is unsafe.</b> The CRS fetch wrapper correlates with CarPlay <code>SIGSEGV</code> in <code>DBIconLayoutVehicleDataProvider getIconStateWithCompletion:</code>. Disabling the fetch wrapper stops the crash/relaunch loop. This is separate from roster admission.</p>
+      </div>
+      <div class="entry warn">
+        <span class="meta">open · safe mode observation</span>
+        <p><b>Customize is native-only.</b> The safe build returns 12 Apple-native icons in the CRS state; enabled CarSurf apps appear on the dashboard but are absent from Customize. Do not reconstruct or replace fetch results until a safe object-preserving list path is proven.</p>
+      </div>
+      <div class="entry crash">
+        <span class="meta">new wall · 21:47:48 · Stocks launch</span>
+        <p><b>Launching an enabled app can crash the CarPlay host.</b> After launching <code>com.apple.stocks</code>, launchd recorded <code>CarPlayApp [38710] exited due to SIGABRT</code> and respawned PID <code>38717</code>; Stocks itself remained alive. This is a separate launch/admission investigation for the next session.</p>
+      </div>
+    </div>
+  </section>
+
   </div>
 
   <!-- HOOKS -->
@@ -707,8 +735,8 @@ li.hmeta b{color:var(--ink)}
               fix: 'Build 8 (<code>0.1.4-19</code>) reverted to pass-through (Build-4 behavior) — no crash; live sync and no-reload gating kept.' },
             { id: 'sb-svc3', t: 'hook', label: 'fetchIconStateForVehicleID:completion:', loc: 'CSCarKitPolicy.m:1611',
               why: 'Fetch-state service hook — reads the current state so the delta can be computed.',
-              fail: 'Build 5\'s PAC crash lived here: DashBoard\'s <code>getIconStateWithCompletion:</code> segfaulted reading a reconstructed <code>CRSIconLayoutState</code>; garbage top-frame = jumped through a corrupted/failed-PAC pointer.',
-              fix: 'Reconstruct-and-reserve path removed with the pass-through recovery.' }
+              fail: 'Build 5\'s PAC crash lived here: DashBoard\'s <code>getIconStateWithCompletion:</code> segfaulted reading a reconstructed <code>CRSIconLayoutState</code>; the connected 08-16 run reproduced the same native fetch crash while the wrapper was installed.',
+              fix: 'Fetch interception is disabled in the safe build. Design a non-reconstructing, object-preserving read path before re-enabling it; native roster admission remains a separate branch.' }
           ]},
           { id: 'sb-ctrl', t: 'cls', label: 'CRSIconLayoutController', sub: 'CSCarKitPolicy.m', kids: [
             { id: 'sb-ctrl1', t: 'hook', label: 'init · setConnection: · setIconOrder: · fetch (4)', loc: 'CSCarKitPolicy.m:1617–1628',

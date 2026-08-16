@@ -102,6 +102,12 @@ The two observed failure modes now have bounded safeguards:
   This keeps DashBoard's model coherent; simply dropping the empty write was the
   earlier desynchronization/PAC path. A following empty fetch is also served
   from that vehicle's last-good state read-side.
+- The CRS `fetchIconStateForVehicleID:completion:` interception is currently
+  disabled in the safe connected-device build. Re-enabling it reproduced a
+  native CarPlay `SIGSEGV` in `DBIconLayoutVehicleDataProvider`; the safe build
+  leaves the native fetch untouched. This means Customize currently shows only
+  the native icon-state entries while runtime-admitted CarSurf apps still appear
+  on the dashboard.
 - If DashBoard later reconciles a successful hidden-icons write back to
   all-visible, CarSurf re-fetches and re-applies the same object-preserving move
   at 2s, 10s, 30s, and 60s. It does not invalidate the application library or
