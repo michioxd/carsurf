@@ -1399,10 +1399,76 @@ static void CSRememberGoodIconState(id state, id vehicleID) {
     // Keep the legacy single-state diagnostics in sync for existing log/tools.
     gLastGoodIconState = state;
     gLastGoodIconCount = count;
+    CSLog("icon-layout remembered good state key=%s vehicle-class=%s state=%s count=%lu "
+          "entries=%lu",
+          key.UTF8String ?: "(nil)",
+          vehicleID ? object_getClassName(vehicleID) : "(nil)",
+          object_getClassName(state), (unsigned long)count,
+          (unsigned long)gLastGoodIconStates.count);
 }
 
 static id CSLastGoodIconStateForVehicle(id vehicleID) {
     return gLastGoodIconStates[CSIconStateVehicleKey(vehicleID)];
+}
+
+static void CSCopyIconStateMetadata(id dst, id src);
+
+// DashBoard persists the authoritative per-vehicle order independently of the
+// CRS object graph. On a fresh CarPlay process the first setIconState call can
+// therefore contain an empty CRS state even though this plist still has the
+// complete layout. Rebuild native CRS objects from that persisted order so the
+// writer receives a coherent state on the first call after relaunch.
+static id CSPersistedIconStateForVehicle(id template, id vehicleID) {
+    NSString *key = CSIconStateVehicleKey(vehicleID);
+    NSString *path = [@"/var/mobile/Library/SpringBoard"
+                      stringByAppendingPathComponent:
+                      [key stringByAppendingString:@"-CarDisplayIconState.plist"]];
+    NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:path];
+    NSArray *iconLists = [plist[ @"iconLists" ] isKindOfClass:NSArray.class]
+        ? plist[ @"iconLists" ] : nil;
+    Class iconClass = CSLookupClass("CRSApplicationIcon");
+    Class pageClass = CSLookupClass("CRSIconLayoutPage");
+    Class stateClass = object_getClass(template);
+    SEL iconInit = @selector(initWithBundleIdentifier:);
+    SEL pageInit = @selector(initWithIcons:);
+    SEL stateInit = @selector(initWithPages:hiddenIcons:);
+    if (iconLists.count == 0 || !iconClass || !pageClass || !stateClass ||
+        ![iconClass instancesRespondToSelector:iconInit] ||
+        ![pageClass instancesRespondToSelector:pageInit] ||
+        ![stateClass instancesRespondToSelector:stateInit]) return nil;
+
+    NSMutableArray *pages = [NSMutableArray new];
+    for (NSArray *bundleIDs in iconLists) {
+        if (![bundleIDs isKindOfClass:NSArray.class]) continue;
+        NSMutableArray *icons = [NSMutableArray new];
+        for (NSString *bundleID in bundleIDs) {
+            if (![bundleID isKindOfClass:NSString.class] || bundleID.length == 0) continue;
+            id icon = ((id (*)(id, SEL, id))objc_msgSend)([iconClass alloc],
+                                                            iconInit, bundleID);
+            if (icon) [icons addObject:icon];
+        }
+        id page = ((id (*)(id, SEL, id))objc_msgSend)([pageClass alloc], pageInit, icons);
+        if (page) [pages addObject:page];
+    }
+
+    NSMutableArray *hidden = [NSMutableArray new];
+    NSDictionary *metadata = [plist[ @"metadata" ] isKindOfClass:NSDictionary.class]
+        ? plist[ @"metadata" ] : nil;
+    for (NSString *bundleID in metadata[@"hiddenIcons"]) {
+        if (![bundleID isKindOfClass:NSString.class] || bundleID.length == 0) continue;
+        id icon = ((id (*)(id, SEL, id))objc_msgSend)([iconClass alloc],
+                                                        iconInit, bundleID);
+        if (icon) [hidden addObject:icon];
+    }
+    if (pages.count == 0) return nil;
+    id restored = ((id (*)(id, SEL, id, id))objc_msgSend)([stateClass alloc],
+                                                            stateInit, pages, hidden);
+    if (!restored) return nil;
+    CSCopyIconStateMetadata(restored, template);
+    CSLog("icon-layout restored persisted state key=%s pages=%lu visible=%lu",
+          key.UTF8String ?: "(nil)", (unsigned long)pages.count,
+          (unsigned long)CSIconStateVisibleCount(restored));
+    return restored;
 }
 
 // Does a fetched CRSIconLayoutState already contain this bundle id, in a visible
@@ -1758,23 +1824,41 @@ static void cs_iconLayoutSetState(id self, SEL _cmd, id state, id vehicleID) {
     if (CSIconStateVisibleCount(state) > 0) {
         CSRememberGoodIconState(state, vehicleID);
     }
+    id stateToWrite = state;
+    if (CSIconStateVisibleCount(state) == 0) {
+        NSString *key = CSIconStateVehicleKey(vehicleID);
+        id fallback = CSLastGoodIconStateForVehicle(vehicleID);
+        CSLog("icon-layout empty set lookup key=%s vehicle-class=%s fallback=%s "
+              "last-count=%lu entries=%lu",
+              key.UTF8String ?: "(nil)",
+              vehicleID ? object_getClassName(vehicleID) : "(nil)",
+              fallback ? object_getClassName(fallback) : "(nil)",
+              (unsigned long)gLastGoodIconCount,
+              (unsigned long)gLastGoodIconStates.count);
+        if (!fallback) fallback = CSPersistedIconStateForVehicle(state, vehicleID);
+        NSUInteger fallbackCount = CSIconStateVisibleCount(fallback);
+        if (fallback && fallbackCount > 0) {
+            // Keep calling DashBoard's real writer so its model and persistence
+            // stay synchronized; only replace the transient connect-time empty
+            // payload with the valid state it just fetched for this vehicle.
+            // Dropping the write was the earlier PAC/desynchronization path.
+            stateToWrite = fallback;
+            CSLog("CarPlay icon-layout replaced transient empty set state with "
+                  "last good vehicle state (count=%lu)",
+                  (unsigned long)fallbackCount);
+        }
+    }
     CSLog("CarPlay icon-layout set state process=%s vehicle=%s state=%s",
           NSProcessInfo.processInfo.processName.UTF8String,
           [vehicleID description].UTF8String ?: "(nil)",
           state ? object_getClassName(state) : "(nil)");
     CSDescribeIconShape("setState.state", state);
 
-    // NO empty-state guard here. It was tried (block the 0-icon state DashBoard
-    // writes on relaunch to keep Customize populated) and it CAUSED a reproducible
-    // CarPlay crash loop: dropping DashBoard's own setIconState desynced its model
-    // (DashBoard believed the layout empty while the service still returned the
-    // real one), and its next getIconStateWithCompletion read jumped through a
-    // bad pointer (EXC_BAD_ACCESS/PAC). Build 4 — which passed setIconState
-    // through untouched — did NOT crash. So we never interfere with DashBoard's
-    // own icon-state writes; the enable/disable delta is applied separately by
-    // CSApplyHiddenIconsDelta. The Customize-empty-on-relaunch is a distinct issue
-    // to solve without desyncing DashBoard.
-    orig_iconLayoutSetState(self, _cmd, CSFilterIconLayoutState(state), vehicleID);
+    // Do not block DashBoard's writer. The only intervention is the
+    // object-preserving, per-vehicle fallback above for its transient empty
+    // connect/relaunch payload; all ordinary user Customize writes pass through
+    // unchanged. Enable/disable deltas remain separate.
+    orig_iconLayoutSetState(self, _cmd, CSFilterIconLayoutState(stateToWrite), vehicleID);
 }
 
 static void (*orig_iconLayoutServiceFetchState)(id, SEL, id, id);

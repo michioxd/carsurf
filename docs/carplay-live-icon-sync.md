@@ -96,11 +96,12 @@ directly (`dictionaryWithContentsOfFile:`), so:
 
 The two observed failure modes now have bounded safeguards:
 
-- DashBoard's transient empty `setIconState` is still passed through untouched,
-  but the last non-empty state is remembered per vehicle from both `setState`
-  and `fetchState`. If the following fetch is the connect-time empty state,
-  CarSurf serves that vehicle's last-good state read-side, without changing the
-  writer or desynchronizing DashBoard.
+- DashBoard's transient empty `setIconState` still goes through the native
+  writer, but its payload is replaced with the same vehicle's last non-empty
+  state. The last-good state is remembered from both `setState` and `fetchState`.
+  This keeps DashBoard's model coherent; simply dropping the empty write was the
+  earlier desynchronization/PAC path. A following empty fetch is also served
+  from that vehicle's last-good state read-side.
 - If DashBoard later reconciles a successful hidden-icons write back to
   all-visible, CarSurf re-fetches and re-applies the same object-preserving move
   at 2s, 10s, 30s, and 60s. It does not invalidate the application library or
