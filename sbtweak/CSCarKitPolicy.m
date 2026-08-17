@@ -902,28 +902,41 @@ static void CSInvalidateCarPlayApplicationLibraries(void) {
     CSTimingLog("reload invalidation end objects=%lu", (unsigned long)invalidated);
 }
 
-// --- DBApplication carPlayDeclaration bridge -----------------------------------
+// --- DBApplication → -info selector bridge ------------------------------------
 // The in-place dashboard mutation below loads a runtime-admitted app through
-// -[DBApplicationController _loadApplicationWithInfo:], which drives
-// -_updatePolicyForApplication:. On iOS 18.5 that sends -carPlayDeclaration to
-// the DBApplication, but the class does not implement it — only its -info (a
-// DBApplicationInfo) does — so the load aborted with
-//   -[DBApplication carPlayDeclaration]: unrecognized selector
-// and CarPlay crash-looped. Answer the selector by forwarding to the app's own
-// -info, which returns the exact declaration the runtime-admission factory built.
+// -[DBApplicationController _loadApplicationWithInfo:] → -initWithApplicationInfo:,
+// which produces a thin DBApplication *wrapper*. That wrapper re-exposes only a
+// handful of selectors (-bundleIdentifier, -info, -appPolicy, the BOOL getters);
+// it does NOT expose the app-metadata selectors that live on its backing
+// DBApplicationInfo (an FBSApplicationInfo subclass). DashBoard's policy, launch
+// and scene machinery nonetheless sends that whole family straight to the
+// wrapper, and each absent selector aborts the CarPlay host with an
+// "unrecognized selector" NSInvalidArgumentException + respawn while the launched
+// app itself stays alive (all captured by CSCrashDiag). Observed so far:
+//   * -carPlayDeclaration   — -_updatePolicyForApplication:            (crash #1)
+//   * -applicationIdentity  — icon-tap → launch request (SpringBoardHome→DashBoard)
+//   * -processIdentity      — launch/scene request build (FrontBoard→DashBoard)
+// with -signerIdentity a sibling on the same FBSApplicationInfo. Bridging them
+// one at a time is a losing game — each fix just surfaces the next selector.
 //
-// This is the deliberate exception to CSRuntime's "never class_addMethod" rule:
-// the framework DOES send this selector and crashes when it is absent, so the
-// method is one the framework expects. class_getInstanceMethod guards it — if
-// the system ever provides the method (now or via a later-loaded category) we
-// install nothing and native behavior is kept.
-static id cs_dbApplicationCarPlayDeclaration(id self, SEL _cmd) {
+// Root-cause fix: make the wrapper *transparent* for exactly the selectors it
+// lacks but its own -info implements, by forwarding them to -info through the
+// ObjC fast-forwarding path -forwardingTargetForSelector:. One method covers the
+// entire FBSApplicationInfo family, now and later. It deliberately does NOT touch
+// -respondsToSelector: (which stays NO for a forwarded selector) so any framework
+// feature-detection on native DBApplication instances is byte-for-byte unchanged;
+// it can only turn a would-be crash into the value -info already provides, never
+// redirect a selector the wrapper itself answers (-info, -bundleIdentifier, etc.
+// resolve normally and never reach forwarding).
+static id cs_dbApplicationForwardingTargetForSelector(id self, SEL _cmd, SEL aSelector) {
+    // Only forward what -info can actually answer; otherwise return nil so the
+    // normal doesNotRecognizeSelector path runs and real bugs are not masked.
     SEL infoSelector = @selector(info);
-    if (![self respondsToSelector:infoSelector]) return nil;
-    id info = ((id (*)(id, SEL))objc_msgSend)(self, infoSelector);
-    SEL declarationSelector = @selector(carPlayDeclaration);
-    if (!info || ![info respondsToSelector:declarationSelector]) return nil;
-    return ((id (*)(id, SEL))objc_msgSend)(info, declarationSelector);
+    if (aSelector && [self respondsToSelector:infoSelector]) {
+        id info = ((id (*)(id, SEL))objc_msgSend)(self, infoSelector);
+        if (info && [info respondsToSelector:aSelector]) return info;
+    }
+    return nil;
 }
 
 static void CSInstallDBApplicationDeclarationBridge(void) {
@@ -932,16 +945,20 @@ static void CSInstallDBApplicationDeclarationBridge(void) {
     // DBApplication only exists in the CarPlay UI process; absent elsewhere.
     Class dbApplication = objc_getClass("DBApplication");
     if (!dbApplication) return;
-    SEL selector = @selector(carPlayDeclaration);
-    if (class_getInstanceMethod(dbApplication, selector)) {
-        installed = YES; // the system provides it — do not shadow it
-        return;
-    }
+
+    // class_addMethod fails only if DBApplication defines its OWN
+    // forwardingTargetForSelector: (it inherits NSObject's nil-returning default
+    // on iOS 18.5, so the add succeeds and shadows it). If a future build ships a
+    // real override, leave it alone rather than clobber it.
+    SEL selector = @selector(forwardingTargetForSelector:);
     if (class_addMethod(dbApplication, selector,
-                        (IMP)cs_dbApplicationCarPlayDeclaration, "@@:")) {
-        installed = YES;
-        CSLog("installed DBApplication carPlayDeclaration bridge (forwards to -info)");
+                        (IMP)cs_dbApplicationForwardingTargetForSelector, "@@::")) {
+        CSLog("installed DBApplication -forwardingTargetForSelector: bridge "
+              "(forwards unhandled selectors to -info)");
+    } else {
+        CSLog("DBApplication already defines -forwardingTargetForSelector: — not shadowing");
     }
+    installed = YES;
 }
 
 // Pin a dashboard object (DBApplicationInfo, or the DBApplication built from it)
@@ -2877,6 +2894,13 @@ static void CSInstallDeclarationTrace(void) {
 
 void CSInstallCarKitPolicyHook(void) {
     CSTimingLog("CarKit policy hook installation begin");
+    // The dashboard may contain an already-enabled runtime-admitted app before
+    // any preference delta arrives. Install the DBApplication selector bridge
+    // during CarPlay startup as well as from the live toggle path; otherwise a
+    // first tap on that existing row can reach _updatePolicyForApplication:
+    // before the delta helper has had a chance to add the method and abort the
+    // CarPlay host with an unrecognized-selector exception.
+    CSInstallDBApplicationDeclarationBridge();
     // The icon-layout classes live in a separate CarPlay UI image and may be
     // present in CarPlayTemplateUIHost without the policy evaluator. Install
     // these hooks before the evaluator gate so dashboard roster changes can be
@@ -2917,6 +2941,10 @@ void CSInstallCarKitPolicyHook(void) {
     CSInstallDeclarationTrace();
     CSInstallRosterTrace();
     CSInstallApplicationLibraryTrace();
+    // DBApplication can be lazy-loaded after the policy classes. Retry here so
+    // the bridge is present before the first roster query/launch even when the
+    // startup-time lookup above ran before Dashboard loaded its model classes.
+    CSInstallDBApplicationDeclarationBridge();
     CSInstallIconLayoutStateHooks();
 
     CSLog("CarKit policy hook installed (plain=%d, inVehicle=%d)", plain, inVehicle);

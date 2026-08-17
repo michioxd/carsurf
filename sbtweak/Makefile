@@ -3,6 +3,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = CSSystem
 
 CSSystem_FILES  = CSSystem.m
+CSSystem_FILES += CSCrashDiag.m
 CSSystem_FILES += CSCarKitPolicy.m
 CSSystem_FILES += CSSceneManifestSpoof.m
 CSSystem_FILES += CSEntitlementSpoof.m

@@ -34,6 +34,12 @@ static void CSInstallCarPlayHooks(void) {
     } else {
         CSLog("iOS 18+ — CarKit ignores LaunchServices; declaration-factory "
               "runtime admission is installed by the CarKit policy hook");
+        // Admission and launch are separate gates on iOS 18. CarKit builds
+        // the declaration through the factory hook, while the launch broker
+        // still reads UIApplicationSceneManifest to obtain a CarPlay window
+        // role. Install only that role accessor; the older entitlement and
+        // cached-value hooks stay disabled because they sit on hot LS paths.
+        CSInstallSceneManifestRoleSpoof();
     }
 
     // iOS 18-era path; the two below are no-ops when their classes are
@@ -88,6 +94,17 @@ static void CSSystemInit(void) {
 
         if (CSIsSpringBoard()) {
             CSStartRelay();
+        }
+
+        // Capture the abort reason for the CarPlay-host launch crash. The host
+        // exits with SIGABRT and respawns before ReportCrash can persist an .ips,
+        // so record name/reason/backtrace to carsurf.log ourselves. Host UI
+        // processes only; SpringBoard and carkitd are left untouched.
+        NSString *proc = NSProcessInfo.processInfo.processName;
+        if ([proc isEqualToString:@"CarPlay"] ||
+            [proc isEqualToString:@"CarPlayApp"] ||
+            [proc isEqualToString:@"CarPlayTemplateUIHost"]) {
+            CSInstallCrashDiagnostics();
         }
 
         if (objc_getClass("CRCarPlayAppPolicyEvaluator") || objc_getClass("CARApplication") ||

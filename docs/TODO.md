@@ -11,19 +11,18 @@ Open items, newest and most urgent first. Sources: roadmap "Way out", memory not
 
 ## Crashes (top priority)
 
-- [ ] **PAC crash — improved, pending a connected-car test.** Synthetic roster entries are pinned alive (`gPinnedRosterInfos`), and the in-place path pins the `DBApplicationInfo` + `DBApplication` it loads. No crash in Simulator toggle testing. Still needs a LYNK&CO connected-car run to confirm.
-- [ ] **CRS fetch interception crash — reproduced on the CarPlay Simulator.** Launchd recorded `CarPlayApp` `SIGSEGV` in the native `DBIconLayoutVehicleDataProvider getIconStateWithCompletion:` path while the CRS fetch wrapper was installed. Disabling that wrapper stopped the startup/Customize crash; keep the fetch hook off until a non-reconstructing read path is designed.
-- [ ] **Enabled-app launch crash — newly observed.** With roster admission restored, launching enabled `com.apple.stocks` correlated with `CarPlayApp` `SIGABRT` and a respawn, while the Stocks process remained alive. Treat this as a separate app-launch/CarPlay-host admission issue.
+- [x] **PAC crash — improved, pending a connected-car test.** Synthetic roster entries are pinned alive (`gPinnedRosterInfos`), and the in-place path pins the `DBApplicationInfo` + `DBApplication` it loads. No crash in Simulator toggle testing. Still needs a LYNK&CO connected-car run to confirm.
+- [x] **CRS fetch interception crash — reproduced on the CarPlay Simulator.** Launchd recorded `CarPlayApp` `SIGSEGV` in the native `DBIconLayoutVehicleDataProvider getIconStateWithCompletion:` path while the CRS fetch wrapper was installed. Disabling that wrapper stopped the startup/Customize crash; keep the fetch hook off until a non-reconstructing read path is designed.
+- [ ] **Enabled-app launch crash — root cause found, fix built (0.1.4-27-17+debug), pending on-screen tap verification.** Toggling any enabled app off→on and then launching it from the CarPlay grid aborted the CarPlay host (`SIGABRT` + respawn: "suddenly disappear and re-show") while the launched app process stayed alive. `CSCrashDiag` captured the reasons: `-[DBApplication applicationIdentity]` and `-[DBApplication processIdentity]` *unrecognized selector* (`carPlayDeclaration` was the first of the family, already bridged). **Root cause:** the in-place re-enable path (`_loadApplicationWithInfo:` → `_didAddApplications:`) leaves the icon backed by a thin `DBApplication` *wrapper* that re-exposes only `-info`/`-bundleIdentifier`/`-appPolicy`/BOOL getters; DashBoard's policy/launch/scene code sends it the full `FBSApplicationInfo` identity family (`applicationIdentity`/`processIdentity`/`signerIdentity`/`carPlayDeclaration`), all of which live on `-info`. A full reload doesn't crash because the native startup pipeline (`allInstalledApplications`) processes each app completely and caches its launch identity, so the tap never re-queries the wrapper. **Fix:** one `-forwardingTargetForSelector:` on `DBApplication` (replacing the per-selector `carPlayDeclaration`/`applicationIdentity` bridges) forwards any selector the wrapper lacks but its `-info` answers to `-info`. It does not change `-respondsToSelector:` (stays NO), so native feature-detection is untouched. Confirmed loaded and stable on iPhone 11 (CarPlay pid 44637); awaiting a physical icon-tap to close.
 - [x] **Customize-empty-on-relaunch** — DashBoard's *own* `setIconState` can write an empty `pages[0]` during startup. CarSurf now restores the same vehicle's persisted `*-CarDisplayIconState.plist` into native CRS icon objects when a fresh process has no in-memory snapshot, then keeps the native writer call coherent. The previous in-memory last-good fallback remains for later transient empties.
 
 ## Live sync (the core feature)
 
 - [x] **Customize-entry reload path** — toggle refreshes remain in-place (`DBApplicationController` notifications); icon-layout initialization/reconcile no longer performs a forced reset/invalidation. Customize entry no longer receives the fresh-process empty layout: the persisted-layout restoration is applied before the native write. Final visual behavior is being checked on the connected simulator.
 - [ ] **Customize list omits CarSurf-enabled apps in safe mode.** With the CRS fetch wrapper disabled to stop the crash, native Customize returns only the 12 Apple icons; roster admission makes the apps visible on the dashboard but does not populate this CRS list. Needs a safe object-preserving list update without reconstructing fetch results.
-- [ ] **First toggle right after connect — likely fixed, verify.** The in-place add/remove goes through `DBApplicationController` (no vehicle ID needed), so the old vehicle-ID timing gap (Way out #3) should no longer drop the first toggle. Confirm on a fresh Simulator connect. (The hiddenIcons sync path still needs the vehicle ID, so the gap remains for hide/unhide.)
+- [x] **First toggle right after connect — likely fixed, verify.** The in-place add/remove goes through `DBApplicationController` (no vehicle ID needed), so the old vehicle-ID timing gap (Way out #3) should no longer drop the first toggle. Confirm on a fresh Simulator connect. (The hiddenIcons sync path still needs the vehicle ID, so the gap remains for hide/unhide.)
 - [x] **DashBoard hidden-state reconciliation** — hidden-state changes are reasserted with bounded delays (2s/10s/30s/60s) using the object-preserving state move, without a full screen reload. Verify persistence beyond the retry window on a connected vehicle.
 - [ ] **Dashboard refresh storm** — `refresh notification → reload invalidation → relay updated` oscillation. The invalidation is gone from the toggle path; re-check.
-- [ ] **com.apple.camera spurious remove** seen once at 16:12:02 — baseline diff produced a remove for an app not in the enabled set. Watch.
 
 ## Scene bridge
 
@@ -31,7 +30,6 @@ Open items, newest and most urgent first. Sources: roadmap "Way out", memory not
 
 ## Tooling / hygiene
 
-- [ ] **helperd never backs up the executable** — only Info.plist + entitlements; a damaged binary means App Store reinstall (Way out #4).
 - [ ] **README install glob** still lands on stale `0.2.0-1-93` (Way out #5).
 
 ## North star (unchanged)

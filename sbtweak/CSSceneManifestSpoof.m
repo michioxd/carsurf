@@ -585,3 +585,30 @@ void CSInstallSceneManifestSpoof(void) {
               "admitted at runtime on this release.");
     }
 }
+
+/// CarKit on iOS 18 does not use LSBundleProxy for its admission decision, but
+/// the CarPlay launch broker still needs a CarPlay scene role to ask an
+/// ordinary phone app for a scene. The full iOS 16/17 installer also hooks
+/// entitlement and cached-value accessors; those are hot paths on iOS 18 and
+/// were deliberately disabled there. Keep this launch fix to the one
+/// info-dictionary accessor that supplies UIApplicationSceneManifest.
+void CSInstallSceneManifestRoleSpoof(void) {
+    static BOOL installed = NO;
+    if (installed) return;
+
+    Class proxy = CSLookupClass("LSBundleProxy");
+    if (!proxy) {
+        CSLog("WARNING: LSBundleProxy absent — CarPlay scene-role admission "
+              "unavailable for runtime-admitted apps");
+        return;
+    }
+
+    BOOL info = CSSwizzleInstanceMethod(
+        proxy, @selector(objectForInfoDictionaryKey:ofClass:),
+        (IMP)cs_objectForInfoDictionaryKey, (IMP *)&orig_objectForInfoDictionaryKey);
+    if (info) {
+        installed = YES;
+        CSLog("runtime CarPlay launch role spoof installed (info=%d; "
+              "entitlement hooks remain off)", info);
+    }
+}
