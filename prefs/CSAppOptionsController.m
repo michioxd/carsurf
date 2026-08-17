@@ -163,16 +163,12 @@
         // The one thing this whole screen exists to do: everything below is
         // detail for an app that's already on.
         PSSpecifier *enableGroup = [PSSpecifier groupSpecifierWithName:nil];
-        // "see status below" is only true where the section below actually
-        // exists — an app that keeps its original signature has no status to see.
-        BOOL untouched = CSUsesRuntimeCarPlayAdmission() || self.carsurfAppIsNativeCarPlay;
-        [enableGroup setProperty:untouched
-                                     ? @"Puts this app on the CarPlay dashboard. "
-                                       @"Nothing on disk is modified — the app keeps "
-                                       @"its original signature."
-                                     : @"Puts this app on the CarPlay dashboard. "
-                                       @"carsurf-helperd patches it in the background — "
-                                       @"see status below."
+        // On-disk patching is retired: CarPlay admission is done entirely at
+        // runtime on every supported release, so the app's bytes are never
+        // modified and there is no per-app patch status to show.
+        [enableGroup setProperty:@"Puts this app on the CarPlay dashboard. "
+                                 @"Nothing on disk is modified — the app keeps "
+                                 @"its original signature."
                           forKey:@"footerText"];
         [result addObject:enableGroup];
 
@@ -186,43 +182,11 @@
                                               edit:Nil];
         [result addObject:enable];
 
-        // The whole qualification section only means something where the app has
-        // to be patched on disk. Before iOS 18 admission happens at runtime and
-        // the bundle is never touched, so a status line, a "Patch Now" button and
-        // a patch log would all describe work that never runs. Same for an app
-        // that already ships CarPlay support on any release: its binary is never
-        // touched either — carsurf-helperd refuses to re-sign one, which is what
-        // protects it — so the section would only ever say "nothing to do".
-        if (!CSUsesRuntimeCarPlayAdmission() && !self.carsurfAppIsNativeCarPlay) {
-            // Patching is manual for now: nothing on-device notices an app update
-            // by itself, so if YouTube (or any enabled app) drops off CarPlay
-            // after updating, this is where the user comes to fix it.
-            _carsurfStatusGroup = [PSSpecifier groupSpecifierWithName:@"CarPlay Qualification"];
-            [_carsurfStatusGroup setProperty:self.carsurfPatchStatusText forKey:@"footerText"];
-            [result addObject:_carsurfStatusGroup];
-
-            PSSpecifier *patchNow =
-                [PSSpecifier preferenceSpecifierNamed:@"Patch Now"
-                                                target:self
-                                                   set:NULL
-                                                   get:NULL
-                                                detail:Nil
-                                                  cell:PSButtonCell
-                                                  edit:Nil];
-            patchNow.buttonAction = @selector(carsurfPatchNow);
-            [result addObject:patchNow];
-
-            PSSpecifier *patchLog =
-                [PSSpecifier preferenceSpecifierNamed:@"View Live Patch Log"
-                                                target:self
-                                                   set:NULL
-                                                   get:NULL
-                                                detail:CSPatchLogController.class
-                                                  cell:PSLinkCell
-                                                  edit:Nil];
-            [patchLog setProperty:self.bundleIdentifier forKey:@"carsurfBundle"];
-            [result addObject:patchLog];
-        }
+        // The old "CarPlay Qualification" section (status line, "Patch Now"
+        // button, per-app patch log) is gone: on-disk patching is retired and
+        // every app is admitted to CarPlay at runtime, so there is no background
+        // re-sign to trigger or report on. carsurf-helperd no longer services a
+        // patch request at all.
 
         PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
         [group setProperty:@"Orientation picks the shape of the viewport on the "

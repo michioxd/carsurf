@@ -37,7 +37,8 @@ Open items, newest and most urgent first. Sources: roadmap "Way out", memory not
 ## Tooling / hygiene
 
 - [ ] **README install glob** still lands on stale `0.2.0-1-93` (Way out #5).
+- [x] **On-disk patching removed from `helperd` (0.1.4-27-19+debug).** Runtime admission now covers every supported release (iOS <18 via the LS/scene hooks, iOS 18+ via the CarKit factory + `DBApplicationInfo` roster injection), so the daemon no longer patches, re-signs, trustcaches, backs up, or reverts any bundle. `carsurf-helperd.m` shrank 988→~135 lines to its one core job — writing the app-readable relay — and the postinst now **loads** it (it was deliberately disabled while it did patching) so the boot-time relay fallback runs for fresh-install / RootHide. Removed the per-app "Patch Now" UI from prefs and the `ldid`/`uikittools` Depends. `CSUsesRuntimeCarPlayAdmission()` is intentionally **unchanged** — it still selects the per-release admission hook in `CSSystem.m` (the full `CSInstallSceneManifestSpoof` would crash-loop SpringBoard on 18.5). Device-verified: single launchd daemon, relay updates on every toggle, no patch handlers.
 
-## North star (unchanged)
+## North star (reached for helperd)
 
-Runtime admission only — no on-disk app mutation, no trustcache, no per-app dylib. The version that survives App Store updates. The on-disk and runtime paths coexist until runtime covers every app.
+Runtime admission only — no on-disk app mutation, no trustcache, no per-app dylib. The version that survives App Store updates. **The on-disk patch path has now been removed from `helperd`; runtime admission is the only mechanism.** (Any bundles patched by an older build are left in place — they still work via their on-disk declaration and are simply skipped by the runtime injector; there is no longer an automatic revert.)
