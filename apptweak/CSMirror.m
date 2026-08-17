@@ -67,10 +67,33 @@ BOOL CSAppIsSingleWindowOnly(void) {
         NSDictionary *manifest = NSBundle.mainBundle.infoDictionary[@"UIApplicationSceneManifest"];
         NSDictionary *configurations = [manifest isKindOfClass:NSDictionary.class]
                                            ? manifest[@"UISceneConfigurations"] : nil;
-        singleWindow = ![configurations isKindOfClass:NSDictionary.class] ||
-                       [configurations count] == 0;
-        CSVLog("scene manifest %s -> %s mode",
-                 singleWindow ? "absent/empty" : "present",
+
+        // Template roles do not count. A native CarPlay app — YouTube Music,
+        // Zalo — declares a manifest whose only configurations are
+        // CPTemplateApplication* ones, so counting them called it multi-scene
+        // and left it in independent-scene mode. Nothing then builds the car
+        // UI: the app has no plain window-scene delegate to answer the role
+        // rewrite with, and CSSceneManifestSpoof.m has already hidden its
+        // template roles and entitlements from CarPlay, so the template path is
+        // gone too. The scene connected and stayed empty. Counting only the
+        // app's non-template configurations puts these apps in transplant mode,
+        // which is the one path that does not depend on the app cooperating.
+        // The same prefix is what the host side strips; see
+        // CSConfigurationsWithoutTemplateRoles in CSSceneManifestSpoof.m.
+        NSUInteger phoneConfigurations = 0;
+        if ([configurations isKindOfClass:NSDictionary.class]) {
+            for (NSString *role in configurations.allKeys) {
+                if (![role isKindOfClass:NSString.class]) continue;
+                if ([role hasPrefix:@"CPTemplateApplication"]) continue;
+                phoneConfigurations++;
+            }
+        }
+
+        singleWindow = phoneConfigurations == 0;
+        CSVLog("scene manifest %s, %lu non-template configuration(s) -> %s mode",
+                 [configurations isKindOfClass:NSDictionary.class] ? "present"
+                                                                   : "absent/empty",
+                 (unsigned long)phoneConfigurations,
                  singleWindow ? "transplant" : "independent scene");
     });
     return singleWindow;
