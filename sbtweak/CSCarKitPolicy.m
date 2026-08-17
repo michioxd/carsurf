@@ -2200,13 +2200,33 @@ static void CSVerifyHiddenDeltaAfterDelay(id service, id vehicleID,
         if (![service respondsToSelector:fetchSel] || ![service respondsToSelector:setSel]) return;
         void (^completion)(id, id) = ^(id state, id error) {
             if (error || !state) return;
-            id repaired = CSStateWithHiddenDelta(state, disabled, enabled);
+            // Prune this chain's frozen delta against the LIVE enabled set before
+            // replaying it. A disable→re-enable (or the reverse) toggle schedules a
+            // second chain with the opposite intent for the same app; without this
+            // reconciliation the stale chain keeps replaying its move and the two
+            // chains ping-pong hide/un-hide for the whole retry window — the
+            // visible icon flicker. Drop any app whose live state no longer matches
+            // this chain's intent, and stop the chain entirely once a newer toggle
+            // has superseded everything it was defending.
+            NSSet *live = CSRuntimeEnabledIdentifierSet();
+            NSMutableSet *liveDisabled = [disabled mutableCopy];
+            [liveDisabled minusSet:live];      // re-enabled since scheduling → not ours to hide
+            NSMutableSet *liveEnabled = [enabled mutableCopy];
+            [liveEnabled intersectSet:live];   // disabled since scheduling → not ours to show
+            if (liveDisabled.count == 0 && liveEnabled.count == 0) {
+                CSLog("hiddenIcons sync: reassertion superseded by a newer toggle, "
+                      "chain stopped (vehicle=%s attempt=%lu)",
+                      [vehicleID description].UTF8String ?: "(nil)",
+                      (unsigned long)(attempt + 1));
+                return;
+            }
+            id repaired = CSStateWithHiddenDelta(state, liveDisabled, liveEnabled);
             if (!repaired) return;
             ((void (*)(id, SEL, id, id))objc_msgSend)(service, setSel, repaired, vehicleID);
             CSLog("hiddenIcons sync: reasserted state for vehicle=%s attempt=%lu",
                   [vehicleID description].UTF8String ?: "(nil)",
                   (unsigned long)(attempt + 1));
-            CSVerifyHiddenDeltaAfterDelay(service, vehicleID, disabled, enabled, attempt + 1);
+            CSVerifyHiddenDeltaAfterDelay(service, vehicleID, liveDisabled, liveEnabled, attempt + 1);
         };
         ((void (*)(id, SEL, id, id))objc_msgSend)(service, fetchSel, vehicleID, completion);
     });
