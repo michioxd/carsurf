@@ -2,41 +2,25 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Running as root is not sufficient to write inside an app bundle on iOS 18:
-	     access(W_OK) returns EPERM under the storage MAC policy. These are the
-	     entitlements Procursus gives uicache and sshd, which can write there;
-	     storage.AppBundles is the one that actually grants it, and
-	     storage-exempt.heritable extends the exemption to the ldid/uicache
-	     processes this daemon spawns. -->
+	<!-- carsurf-helperd is now a relay-only daemon: it reads the CarSurf
+	     preferences and writes the app-readable relay at
+	     /var/jb/Library/CarSurf/relay.plist. It no longer patches, re-signs,
+	     trustcaches, or writes inside any app bundle, so the whole patching
+	     privilege set that used to live here has been removed:
+	       - storage.AppBundles / storage-exempt.heritable (write inside app
+	         bundles; extend the exemption to spawned ldid/uicache),
+	       - container-manager / MobileContainerManager.allowed /
+	         storage.AppDataContainers / storage.containers (bundle containers),
+	       - skip-library-validation / rootless.install.heritable (spawned tools),
+	       - canmaplsdatabase / canmapbundleidtouuid /
+	         lsapplicationworkspace.rebuildappdatabases (re-register a patched app).
+	     What remains is only what a root relay writer needs: run as a platform
+	     daemon outside a container, and read /var/mobile/Library/Preferences. -->
 	<key>platform-application</key>
 	<true/>
 	<key>com.apple.private.security.no-container</key>
 	<true/>
-	<key>com.apple.private.security.container-manager</key>
-	<true/>
-	<key>com.apple.private.MobileContainerManager.allowed</key>
-	<true/>
-	<key>com.apple.private.security.storage.AppBundles</key>
-	<true/>
-	<key>com.apple.private.security.storage.AppDataContainers</key>
-	<true/>
-	<key>com.apple.private.security.storage.containers</key>
-	<true/>
 	<key>com.apple.private.security.storage.preferences</key>
-	<true/>
-	<key>com.apple.private.security.storage-exempt.heritable</key>
-	<true/>
-	<key>com.apple.private.skip-library-validation</key>
-	<true/>
-	<key>com.apple.rootless.install.heritable</key>
-	<true/>
-	<!-- Resolving a bundle identifier to its on-disk path, and re-registering the
-	     app after patching. -->
-	<key>com.apple.private.coreservices.canmaplsdatabase</key>
-	<true/>
-	<key>com.apple.private.coreservices.canmapbundleidtouuid</key>
-	<true/>
-	<key>com.apple.lsapplicationworkspace.rebuildappdatabases</key>
 	<true/>
 </dict>
 </plist>

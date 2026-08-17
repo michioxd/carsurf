@@ -12,7 +12,6 @@ CSSystem_FILES += CSRelay.m
 CSSystem_FILES += ../shared/CSConfig.m
 CSSystem_FILES += ../shared/CSRuntime.m
 CSSystem_FILES += ../shared/CSLog.m
-CSSystem_FILES += ../shared/CSPatchState.m
 CSSystem_FILES += ../shared/CSAppFilter.m
 
 CSSystem_CFLAGS = -fobjc-arc -I../shared -Wno-deprecated-declarations

@@ -4,9 +4,24 @@
 #import "CSConfig.h"
 #import "CSLog.h"
 #import "CSRuntime.h"
-#import "CSPatchState.h"
 #import <mach-o/loader.h>
 #import <objc/runtime.h>
+
+/// YES when CarPlay admission is granted through the LaunchServices/scene hooks
+/// (iOS 16/17) rather than the CarKit declaration factory (iOS 18+). Both are
+/// runtime paths — nothing is patched on disk any more — but they need different
+/// hooks: on iOS <18 the full LSBundleProxy scene-manifest spoof, on iOS 18+ only
+/// the minimal manifest-role accessor (the full spoof sits on hot Foundation
+/// paths and crash-loops SpringBoard into safe mode on 18.5). This is only a
+/// release selector; it must NOT be forced true or the wrong hook installs.
+static BOOL CSUsesRuntimeCarPlayAdmission(void) {
+    static BOOL runtime;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        runtime = NSProcessInfo.processInfo.operatingSystemVersion.majorVersion < 18;
+    });
+    return runtime;
+}
 
 static BOOL CSIsSpringBoard(void) {
     return [NSProcessInfo.processInfo.processName isEqualToString:@"SpringBoard"];

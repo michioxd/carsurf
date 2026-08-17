@@ -3,7 +3,6 @@
 #import "CSSystemInternal.h"
 #import "CSConfig.h"
 #import "CSLog.h"
-#import "CSPatchState.h"
 #import "CSRuntime.h"
 #import "CSAppFilter.h"
 #import <objc/message.h>
@@ -71,33 +70,20 @@ static void CSInvalidateExpandedRosterCache(void) {
 // blanket-patch: the declaration hands us the exact bundle identifier, so the
 // user's allowlist is applied precisely rather than best-effort.
 //
-// Promotion additionally requires CSPatchStateIsPatched: carsurf-helperd.m is
-// what actually grants SBStarkCapable on disk, and its outcome — not the user's
-// enabled toggle — is the ground truth for whether the entitlement is really
-// there. An app can be enabled in preferences and still not be promoted if the
-// daemon's last patch attempt failed, or (more commonly) if an App Store update
-// silently re-signed the binary and stripped the entitlement since the daemon
-// last checked. That keeps this hook from promoting a policy for a declaration
-// CarKit was never going to build in the first place — see the tracing note
-// below — and gives the Settings UI something concrete to show the user instead
-// of the app just quietly not appearing.
+// Promotion is gated purely on runtime eligibility now (CSRuntimePolicyEligible):
+// admission is entirely runtime — the app's declaration was built by the factory
+// hook below — so any enabled, non-natively-CarPlay app that reaches this hook is
+// promoted. There is no on-disk patch state to consult.
 //
-// launchUsingTemplateUI is forced *off* for a bundle we actually patched: a
-// bridged app has no CPTemplateApplicationSceneDelegate and cannot answer the
-// template protocol, so telling CarPlay not to expect one is what lets the
-// scene-role rewrite in CSSceneBridge.m present a plain UIWindowScene instead.
-//
-// A CSPatchStatusNative bundle must NOT go through CSPromotePolicy at all —
-// it already has a real CPTemplateApplicationSceneDelegate and CSApp.m
-// installs no bridge hooks for it, so forcing launchUsingTemplateUI off would
-// tell CarKit to expect a plain window scene that never gets built: a blank
-// CarPlay screen with neither the app's own template UI nor a bridge behind
-// it. Confirmed the hard way on YouTube Music. Leave CarKit's own policy
-// alone for these; it already admits them correctly on its own.
+// launchUsingTemplateUI is forced *off* for a promoted bundle: a bridged app has
+// no CPTemplateApplicationSceneDelegate and cannot answer the template protocol,
+// so telling CarPlay not to expect one is what lets the scene-role rewrite in
+// CSSceneBridge.m present a plain UIWindowScene instead. Apps that ship real
+// Apple CarPlay entitlements are left on their own admission path (they are
+// filtered out upstream), so CarKit's own policy for them is untouched.
 
 /// Defined with the runtime-admission hooks below; the policy hooks are declared
 /// first because CarKit installs them in that order.
-static BOOL CSIsRuntimeAdmitted(NSString *bundleID);
 static BOOL CSRuntimePolicyEligible(NSString *bundleID);
 static void CSLogAdmittedDeclarationShape(id declaration, NSString *bundleID);
 
@@ -192,24 +178,12 @@ static id cs_effectivePolicyForAppDeclaration(id self, SEL _cmd, id declaration)
     CSVLog("policy request for %s", bundleID.UTF8String);
     if (![config isBundleEnabled:bundleID]) return policy;
 
-    if (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
-        CSRuntimePolicyEligible(bundleID)) {
-        // Same requirement either way: CSApp.m is bridging this app's scene —
-        // re-signed, runtime-admitted, or not — so CarKit needs to be told not
-        // to expect a template delegate. See CSPatchStatusNativeBridged.
+    if (CSRuntimePolicyEligible(bundleID)) {
+        // CSApp.m is bridging this app's runtime-admitted scene, so CarKit needs
+        // to be told not to expect a template delegate.
         CSPromotePolicy(policy, bundleID);
-    } else if (CSPatchStateIsNative(bundleID)) {
-        // Leave CarKit's own policy untouched. It already admits this app and
-        // already set launchUsingTemplateUI correctly for its real
-        // CPTemplateApplicationSceneDelegate; forcing that off here — which
-        // this hook used to do for every enabled bundle, native or not — left
-        // CarKit expecting a template UI from an app CSApp.m does not bridge
-        // (multiple concurrent CarPlay scenes — see CSPatchStatusNative).
-        // Net effect was a blank CarPlay screen for a genuinely-supported app.
-        CSVLog("%s is native CarPlay (multi-scene) — leaving CarKit's own "
-               "policy in place", bundleID.UTF8String);
     } else {
-        CSVLog("%s is enabled but not patched — not promoting", bundleID.UTF8String);
+        CSVLog("%s is enabled but not runtime-eligible — not promoting", bundleID.UTF8String);
     }
 
     return policy;
@@ -245,9 +219,7 @@ static id cs_effectivePolicyInVehicle(id self, SEL _cmd, id declaration, id cert
     if (!bundleID) return policy;
 
     CSVLog("in-vehicle policy request for %s", bundleID.UTF8String);
-    if ([config isBundleEnabled:bundleID] &&
-        (CSPatchStateIsPatched(bundleID) || CSPatchStateIsNativeBridged(bundleID) ||
-         CSRuntimePolicyEligible(bundleID))) {
+    if ([config isBundleEnabled:bundleID] && CSRuntimePolicyEligible(bundleID)) {
         CSPromotePolicy(policy, bundleID);
     }
 
@@ -454,13 +426,6 @@ static NSMutableSet<NSString *> *CSRuntimeAdmittedBundles(void) {
     return set;
 }
 
-static BOOL CSIsRuntimeAdmitted(NSString *bundleID) {
-    if (!bundleID) return NO;
-    @synchronized(CSRuntimeAdmittedBundles()) {
-        return [CSRuntimeAdmittedBundles() containsObject:bundleID];
-    }
-}
-
 /// SpringBoard may construct a declaration while CarPlay evaluates it in a
 /// separate process, so the in-memory admission set is not sufficient. Once an
 /// enabled non-native declaration reaches this hook, it has already passed the
@@ -470,8 +435,10 @@ static BOOL CSRuntimePolicyEligible(NSString *bundleID) {
     if (bundleID.length == 0) return NO;
     CSConfig *config = CSConfig.sharedConfig;
     if (!config.isEnabled || ![config isBundleEnabled:bundleID]) return NO;
-    if (CSPatchStateIsNative(bundleID)) return NO;
-    return CSIsRuntimeAdmitted(bundleID) || !CSPatchStateIsPatched(bundleID);
+    // Any enabled app that reaches this hook has passed the declaration factory
+    // in some process; promote it here too. Admission is entirely runtime now —
+    // there is no on-disk patch state to consult.
+    return YES;
 }
 
 static void CSRecordRuntimeAdmission(NSString *bundleID) {
@@ -501,11 +468,6 @@ static BOOL CSShouldAdmitAtRuntime(NSString *bundleID) {
     if (CSSpoofSuppressed() || !config.isEnabled) return NO;
     if (![config isBundleEnabled:bundleID]) return NO;
 
-    // A natively-capable app already has its own declaration and its own
-    // template delegate; admitting it again would be a no-op at best. Only
-    // reachable when CarKit returned nil, but cheap insurance.
-    if (CSPatchStateIsNative(bundleID)) return NO;
-
     return YES;
 }
 
@@ -523,9 +485,9 @@ static id CSFinishFactoryAdmission(NSString *identifier, id result, id entitleme
     if (CSRuntimeAdmissionIsObserveOnly() || result) return result;
     if (!CSShouldAdmitAtRuntime(identifier)) {
         if (identifier && [CSConfig.sharedConfig isBundleEnabled:identifier]) {
-            CSLog("not admitting %s (suppressed=%d globalEnabled=%d native=%d)",
+            CSLog("not admitting %s (suppressed=%d globalEnabled=%d)",
                   identifier.UTF8String, CSSpoofSuppressed(),
-                  CSConfig.sharedConfig.isEnabled, CSPatchStateIsNative(identifier));
+                  CSConfig.sharedConfig.isEnabled);
         }
         return result;
     }
@@ -2597,22 +2559,10 @@ static id cs_allInstalledApplications(id self, SEL _cmd) {
                           identifier.UTF8String);
                     continue;
                 }
-                // An app that CarSurf already patched has a normal on-disk
-                // CarPlay admission path.  It must not be reconstructed here:
-                // the private FBS initializer asserts for some patched app
-                // proxies when CarPlay builds its filtered library.  Runtime
-                // roster insertion is reserved for enabled, unpatched apps
-                // such as FPT Play.
-                if (CSPatchStateIsPatched(identifier)) {
-                    CSLog("CarPlay roster skipped enabled %s (already patched)",
-                          identifier.UTF8String);
-                    continue;
-                }
-                if (CSPatchStateIsNative(identifier) || CSPatchStateIsNativeBridged(identifier)) {
-                    CSLog("CarPlay roster skipped enabled %s (already native/bridged)",
-                          identifier.UTF8String);
-                    continue;
-                }
+                // An app that already carries real Apple CarPlay entitlements has
+                // its own admission path and is skipped further down
+                // (CSAppProxyHasNativeCarPlay). Everything else enabled is
+                // reconstructed here — on-disk patch state no longer exists.
 
                 // Reuse the previously constructed roster entry when we have one.
                 // This skips the LaunchServices lookup and CarPlay declaration

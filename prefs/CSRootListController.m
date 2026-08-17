@@ -5,7 +5,6 @@
 #import "CSLayoutSegmentCell.h"
 #import "CSScaleSliderCell.h"
 #import "CSLog.h"
-#import "CSPatchLogController.h"
 #import <objc/message.h>
 #import <objc/runtime.h>
 
@@ -104,25 +103,15 @@
 
     // --- Diagnostics -------------------------------------------------------
     PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:@"Diagnostics"];
-    [diagnosticsGroup setProperty:@"Open Live Patch Log to clear old output, "
-                                  @"reproduce a patch failure, and share the resulting "
-                                  @"diagnostic file directly with support."
+    [diagnosticsGroup setProperty:@"Verbose logging records CarSurf's admission and "
+                                  @"scene-bridge activity to /var/mobile/Library/Logs/"
+                                  @"carsurf.log for troubleshooting."
                            forKey:@"footerText"];
     [specifiers addObject:diagnosticsGroup];
 
     [specifiers addObject:[self switchNamed:@"Verbose Logging"
                                         key:@"verboseLogging"
                                       scope:@"global"]];
-
-    PSSpecifier *patchLog =
-        [PSSpecifier preferenceSpecifierNamed:@"Live Patch Log"
-                                        target:self
-                                           set:NULL
-                                           get:NULL
-                                        detail:CSPatchLogController.class
-                                          cell:PSLinkCell
-                                          edit:Nil];
-    [specifiers addObject:patchLog];
 
     PSSpecifier *respring = [PSSpecifier preferenceSpecifierNamed:@"Respring"
                                                           target:self
