@@ -1,119 +1,118 @@
-# CarPlay live enable/disable icon sync — how it works
+# CarPlay live enable/disable icon sync
 
-Status: **live enable/disable sync WORKING** on iOS 18.5 (verified on device with
-the CarPlay Simulator, 2026-08-15). Toggling a CarSurf app off makes its icon
-disappear from the CarPlay dashboard live, and the app stays in the Settings >
-Customize list (moved to hidden, not deleted). One open item remains — see
-"Known issue" at the bottom.
+**Working** on iOS 18.5, verified on device with the CarPlay Simulator
+(2026-08-15). Toggle a CarSurf app off and its icon disappears from the
+dashboard live; the app stays in Settings > Customize, moved to hidden rather
+than deleted. One open issue at the bottom.
 
-All of this lives in [`sbtweak/CSCarKitPolicy.m`](../sbtweak/CSCarKitPolicy.m).
+All of this is in [`sbtweak/CSCarKitPolicy.m`](../sbtweak/CSCarKitPolicy.m).
 
-## The runtime contract (iOS 18.5, confirmed from device logs)
+## The runtime objects
 
-The per-vehicle CarPlay layout is a **`CRSIconLayoutState`**:
+The per-vehicle layout is a **`CRSIconLayoutState`**:
 
-- `-pages` → array of **`CRSIconLayoutPage`**; each `-icons` → array of
-  **`CRSApplicationIcon`** objects (a page's icons array is an immutable
-  `__NSFrozenArrayM`). Resolve a bundle id from a `CRSApplicationIcon` with
-  `-bundleIdentifier` (our `CSIconBundleIdentifier` helper).
-- `-hiddenIcons` → parallel array of `CRSApplicationIcon` objects (the apps that
-  exist for this vehicle but are hidden from the dashboard).
-- metadata getters/setters: `rows`/`columns`/`displaysOEMIcon`/`oemIconLabel`.
-- Rebuild helpers: `-[CRSIconLayoutPage initWithIcons:]`,
+- `-pages` → array of `CRSIconLayoutPage`; each `-icons` → array of
+  `CRSApplicationIcon` (immutable `__NSFrozenArrayM`). Get a bundle id with
+  `-bundleIdentifier` (helper: `CSIconBundleIdentifier`).
+- `-hiddenIcons` → parallel array of `CRSApplicationIcon` — apps that exist
+  for this vehicle but are hidden from the dashboard.
+- metadata: `rows`, `columns`, `displaysOEMIcon`, `oemIconLabel`.
+- rebuild: `-[CRSIconLayoutPage initWithIcons:]`,
   `-[CRSIconLayoutState initWithPages:hiddenIcons:]`.
 
-The **Settings > Customize list = visible icons (pages) ∪ hiddenIcons**. Hiding
-an app means moving it from a page into `hiddenIcons`; it stays in Customize.
+**Settings > Customize = pages ∪ hiddenIcons.** Hiding an app moves it from a
+page into `hiddenIcons`; it stays in Customize.
 
-### The hooks that matter
+## The hooks
 
-The live writer/reader is the **`CRSIconLayoutService`** (NOT the controller):
+The live reader/writer is **`CRSIconLayoutService`** — not the controller:
 
-- `-[CRSIconLayoutService fetchIconStateForVehicleID:completion:]` — returns the
-  current `CRSIconLayoutState`.
-- `-[CRSIconLayoutService setIconState:forVehicleID:]` — writes a new
-  `CRSIconLayoutState`; this is what the native Customize UI calls, and it
-  updates the dashboard **live**.
-- `vehicleID` is a per-vehicle **UUID string** (e.g. the CarPlay Simulator is
-  `7245D718-...`; the real LYNK&CO car is `E7F18C8C-...`). The state persists to
+- `-fetchIconStateForVehicleID:completion:` returns the current state.
+- `-setIconState:forVehicleID:` writes a new one — what native Customize
+  calls, and it updates the dashboard live.
+- `vehicleID` is a per-vehicle UUID string (Simulator `7245D718-…`, the
+  LYNK&CO car `E7F18C8C-…`). State persists to
   `/var/mobile/Library/SpringBoard/<vehicleUUID>-CarDisplayIconState.plist`.
 
-We swizzle `initWithDelegate:`, the connection add/remove callbacks,
-`setIconState:forVehicleID:`, and `fetchIconStateForVehicleID:completion:` on
-`CRSIconLayoutService` (see `CSInstallIconLayoutStateHooks`). From the setState /
-fetch hooks we capture `gLastIconLayoutService` and **`gLastIconLayoutVehicleID`**
-so the sync knows which service + vehicle to address.
+`CSInstallIconLayoutStateHooks` swizzles `initWithDelegate:`, the connection
+add/remove callbacks, `setIconState:forVehicleID:`, and
+`fetchIconStateForVehicleID:completion:`. The setState and fetch hooks
+capture `gLastIconLayoutService` and `gLastIconLayoutVehicleID` so the sync
+knows which service and vehicle to address.
 
-> **Dead end (do not repeat):** `-[CRSIconLayoutController setIconOrder:hiddenIcons:forVehicleID:]`
-> is NOT the live path — in the CarPlay UI process the controller list is empty,
-> so an earlier controller-targeted version computed the right delta but never
-> wrote anything ("no icon-layout service tracked" / "no vehicle identifier").
+> **Dead end, do not repeat:**
+> `-[CRSIconLayoutController setIconOrder:hiddenIcons:forVehicleID:]` is not
+> the live path — in the CarPlay UI process the controller list is empty, so
+> an earlier controller-targeted version computed the right delta and wrote
+> nothing ("no icon-layout service tracked").
 
-## The mechanism
+## The flow
 
-On each enable/disable, `CSPrefsStore` posts the Darwin notifications
-`com.pavunato.carsurf/reload` and `.../application-library-change`.
-`CSInstallCarPlayApplicationLibraryRefresh` observes them and, after a 0.25 s
-settle, runs `CSApplyHiddenIconsDelta(previous)` (alongside the existing roster
-invalidation). Flow:
+On each toggle, `CSPrefsStore` posts `com.pavunato.carsurf/reload` and
+`.../application-library-change`. `CSInstallCarPlayApplicationLibraryRefresh`
+observes them and, after a 0.25s settle, runs `CSApplyHiddenIconsDelta`:
 
-1. `CSApplyHiddenIconsDelta` computes the delta from the previous enabled set vs
-   the current one: `disabled = previous − current`, `enabled = current − previous`.
-2. It finds the live service (`gIconLayoutServices` / `gLastIconLayoutService`)
-   and the vehicle id (`CSIconLayoutVehicleIdentifiers(service)`, else
+1. Compute the delta: `disabled = previous − current`,
+   `enabled = current − previous`.
+2. Find the live service (`gIconLayoutServices` / `gLastIconLayoutService`)
+   and vehicle id (`CSIconLayoutVehicleIdentifiers(service)`, else
    `gLastIconLayoutVehicleID`, else `gLastVehicleIdentifier`).
-3. `CSApplyHiddenDeltaToService` fetches the current state, then
-   `CSStateWithHiddenDelta` rebuilds it **object-preserving**: it MOVES the one
-   app's existing `CRSApplicationIcon` object between its page and `hiddenIcons`,
-   carrying every other icon object (system icons included) and the metadata
-   across unchanged. It writes the result with `setIconState:forVehicleID:`.
+3. `CSApplyHiddenDeltaToService` fetches the state and `CSStateWithHiddenDelta`
+   rebuilds it **object-preserving**: it MOVES the one app's existing
+   `CRSApplicationIcon` between its page and `hiddenIcons`, carrying every
+   other icon object and all metadata across unchanged. Then writes with
+   `setIconState:forVehicleID:`.
 
-**Why object-preserving matters:** the old `CSFilterIconLayoutState` rebuilt
-pages from a *derived* bundle-id list and dropped any icon it could not account
-for (system icons like `com.apple.cardisplay.OEM`), which emptied Customize and
-broke connects. Keeping the real icon OBJECTS and only moving one avoids that.
+**Object-preserving matters.** The old `CSFilterIconLayoutState` rebuilt
+pages from a derived bundle-id list and dropped any icon it couldn't account
+for — including system icons like `com.apple.cardisplay.OEM` — which emptied
+Customize and broke connects.
 
-Verified write (disable `vn.vietmap.live`, simulator vehicle 7245D718): fetched
-14 icons → wrote pages[0]=13 (vietmap removed, all system icons kept) +
-`hiddenIcons=[vn.vietmap.live]`; persisted correctly; no crash; icon disappeared
-live on the dashboard.
+Verified write (disable `vn.vietmap.live`, Simulator vehicle `7245D718`):
+fetched 14 icons, wrote `pages[0]` = 13 with every system icon kept plus
+`hiddenIcons = [vn.vietmap.live]`. Persisted correctly, no crash, icon
+disappeared live.
 
-## How to drive/verify a toggle over SSH (no car UI needed)
+## Driving a toggle over SSH
 
-The device has no `notifyutil`/`python`. `CSConfig.loadRoot` reads the plist file
-directly (`dictionaryWithContentsOfFile:`), so:
+The device has no `notifyutil` or `python`. `CSConfig.loadRoot` reads the
+plist directly, so:
 
-1. Edit `/var/mobile/Library/Preferences/com.pavunato.carsurf.plist` (on the Mac
-   with `python3 plistlib`, flipping `apps.<bundle>.enabled`) and scp it back.
-2. Post the notifications with a tiny signed poster (`np.c`: `notify_post(argv[1])`,
-   built with `xcrun -sdk iphoneos clang -arch arm64`, `ldid -S`, deployed to
-   `/tmp/np`): `/tmp/np com.pavunato.carsurf/application-library-change` then
-   `/tmp/np com.pavunato.carsurf/reload`.
-3. Read `hiddenIcons sync` + `SHAPE setState.state` lines in
-   `/var/mobile/Library/Logs/carsurf.log` (verbose must be on).
+1. Edit `/var/mobile/Library/Preferences/com.pavunato.carsurf.plist` on the
+   Mac (`python3 plistlib`, flip `apps.<bundle>.enabled`) and scp it back.
+2. Post both notifications with `carsurf-notify` (source `tools/np.m`):
+   `application-library-change` first, then `reload`.
+3. Read the `hiddenIcons sync` and `SHAPE setState.state` lines in the log
+   (verbose must be on).
 
-## Current safeguards and verification boundary
+`tools/device-test.sh` does all three.
 
-The two observed failure modes now have bounded safeguards:
+## Safeguards
 
-- DashBoard's transient empty `setIconState` still goes through the native
-  writer, but its payload is replaced with the same vehicle's last non-empty
-  state. The last-good state is remembered from both `setState` and `fetchState`.
-  This keeps DashBoard's model coherent; simply dropping the empty write was the
-  earlier desynchronization/PAC path. A following empty fetch is also served
-  from that vehicle's last-good state read-side.
-- The CRS `fetchIconStateForVehicleID:completion:` interception is currently
-  disabled in the safe connected-device build. Re-enabling it reproduced a
-  native CarPlay `SIGSEGV` in `DBIconLayoutVehicleDataProvider`; the safe build
-  leaves the native fetch untouched. This means Customize currently shows only
-  the native icon-state entries while runtime-admitted CarSurf apps still appear
-  on the dashboard.
-- If DashBoard later reconciles a successful hidden-icons write back to
-  all-visible, CarSurf re-fetches and re-applies the same object-preserving move
-  at 2s, 10s, 30s, and 60s. It does not invalidate the application library or
-  force a screen reload.
+- **DashBoard's transient empty write.** DashBoard itself can `setIconState`
+  an empty `pages[0]` at startup. The call still goes through the native
+  writer, but the payload is replaced with that vehicle's last non-empty
+  state (remembered from both setState and fetchState). Dropping the write
+  instead was the earlier desynchronization/PAC path. An empty fetch is
+  served from the same last-good state.
+- **DashBoard reconciling a write back.** If a successful hidden-icons write
+  gets reverted to all-visible, CarSurf re-applies the same object-preserving
+  move at 2s, 10s, 30s, and 60s. Each reassertion is pruned against the live
+  enabled set at fire time and the chain stops once a newer toggle supersedes
+  it — without that, two chains replay opposite frozen deltas and the icon
+  flickers for a minute. It never invalidates the application library or
+  forces a reload.
 
-The final visual behavior still needs confirmation on a connected vehicle. The
-iPhone 11 simulator/device session used for the latest toggle test reported no
-active icon-layout service, so it can verify notification delivery and roster
-sync but cannot exercise the Customize fetch/write callbacks.
+## Known issue
+
+The `fetchIconStateForVehicleID:completion:` interception is **disabled** in
+the safe connected-device build. Re-enabling it reproduced a native CarPlay
+`SIGSEGV` in `DBIconLayoutVehicleDataProvider`. Consequence: Customize shows
+only the native icon-state entries, while runtime-admitted CarSurf apps still
+appear on the dashboard. A read path that doesn't reconstruct the fetched
+state is needed.
+
+Final visual behaviour still wants a connected-vehicle run. The last toggle
+test session reported no active icon-layout service, so it verified
+notification delivery and roster sync but not the Customize fetch/write
+callbacks.
