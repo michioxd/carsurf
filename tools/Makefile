@@ -1,6 +1,23 @@
 include $(THEOS)/makefiles/common.mk
 
-TOOL_NAME = carsurf-audit carsurf-classes carsurf-prefstest carsurf-apps carsurf-notify
+# Nothing in the tweak, prefs bundle, or helper ever spawns a process, so no
+# tool here is a runtime dependency — they are all diagnostics. Only the three
+# the shipped code actually points a user at go into a release:
+#
+#   carsurf-audit    README's "verify it works" step; named by CSAppList,
+#                    CSEntitlementSpoof, and CSSceneBridge when a hook is missing
+#   carsurf-classes  named by CSCarKitPolicy when the policy evaluator changes
+#   carsurf-logs     README, and CSLog says it collects the per-container logs
+#
+# The rest are development-only and cost ~470 KB installed, so they are built
+# for debug packages and left out of FINALPACKAGE. carsurf-notify is the one to
+# watch: tools/device-test.sh needs it present on the device to post a toggle
+# over SSH, which is fine because that is a debug-build workflow.
+TOOL_NAME = carsurf-audit carsurf-classes
+
+ifneq ($(FINALPACKAGE),1)
+TOOL_NAME += carsurf-prefstest carsurf-apps carsurf-notify
+endif
 
 carsurf-audit_FILES = carsurf-audit.m
 carsurf-audit_CFLAGS = -fobjc-arc
@@ -36,5 +53,7 @@ internal-stage::
 	$(ECHO_NOTHING)mkdir -p "$(THEOS_STAGING_DIR)/usr/local/bin"$(ECHO_END)
 	$(ECHO_NOTHING)cp carsurf-logs.sh "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-logs"$(ECHO_END)
 	$(ECHO_NOTHING)chmod 755 "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-logs"$(ECHO_END)
+ifneq ($(FINALPACKAGE),1)
 	$(ECHO_NOTHING)cp carsurf-vehicle.sh "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-vehicle"$(ECHO_END)
 	$(ECHO_NOTHING)chmod 755 "$(THEOS_STAGING_DIR)/usr/local/bin/carsurf-vehicle"$(ECHO_END)
+endif

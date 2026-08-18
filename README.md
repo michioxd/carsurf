@@ -80,7 +80,7 @@ The `.deb` lands in `packages/`:
 | `Library/LaunchDaemons/com.pavunato.carsurf.helperd.plist` | keeps `carsurf-helperd` running |
 | `usr/local/libexec/carsurf-helperd` | writes the preferences relay |
 | `usr/local/bin/carsurf-audit` | checks every hooked private symbol still exists on this iOS build |
-| `usr/local/bin/carsurf-logs`, `carsurf-classes`, `carsurf-apps`, `carsurf-prefstest`, `carsurf-vehicle`, `carsurf-notify` | on-device diagnostics |
+| `usr/local/bin/carsurf-logs`, `carsurf-classes` | on-device diagnostics. Debug builds also carry `carsurf-apps`, `carsurf-prefstest`, `carsurf-notify` and `carsurf-vehicle`; nothing in the tweak invokes any of them. |
 
 ## Install
 
