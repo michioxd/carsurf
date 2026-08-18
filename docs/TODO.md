@@ -4,6 +4,49 @@
 
 ## Open
 
+- [ ] **Per-app options look dead for App Store apps (2026-08-18, iOS 18.5).**
+  Enabled YouTube Music with `defaults = { idiomMode 2, scale 0.5 }` and no
+  per-app overrides. It launched cleanly on the CarPlay screen with its real
+  phone UI, but at default geometry — none of the settings applied. Evidence
+  that `CSApp.dylib` is not running in it:
+  - There is **no `carsurf.log` in any app container on the device** — only
+    stale `carbridgeng.log` files from the old tweak. `CSLogFilePath` falls
+    back to `NSTemporaryDirectory()` unconditionally, so an injected `CSApp`
+    would have created one.
+  - **No App Store app has ever produced a `[scene/…]` or `[traits/…]` line.**
+    All of them across the whole log come from `Preferences`, `ChargeLimiter`,
+    `TrollStoreLite`, `trollstorehelper` — the apps that can write the shared
+    log. Not one from YouTube, YouTube Music, FPT Play, or Vietmap.
+  - The app renders anyway because the system side does the work: the manifest
+    role spoof gets it a plain `UIWindowSceneSessionRoleApplication`, and the
+    app already declares one. `CSApp` is only needed for idiom/scale/role.
+
+  Two candidates, not yet separated (no `vmmap` on device): `CSApp.dylib` is
+  not injected into App Store apps at all, or it is injected and its log is
+  silently discarded. The second is possible because of a real defect —
+  `CSAppendToFile` (`shared/CSLog.m`) does `if (!file) return;` on a failed
+  `fopen`, and `CSLogFilePath` caches the path under `dispatch_once`. Inside a
+  sandbox `access(W_OK)` can report a shared path writable while the actual
+  `open` is denied, so one failure silences that process for its whole life.
+  **Do that fix first** — fall through to the next path on `fopen` failure. It
+  is worth having regardless, and it answers which of the two this is.
+
+  Until then, Settings advertises Scale / Layout / Interface Idiom for apps
+  where they may do nothing, and the app side is unobservable for exactly the
+  apps the tweak exists for.
+
+- [ ] **The manifest role spoof installs in `carkitd`** — confirmed on device
+  2026-08-18: `[manifest/carkitd] runtime CarPlay launch role spoof installed`.
+  `CSSystem.plist` filters in `carkitd`, and on iOS 18 `CSInstallCarPlayHooks`
+  takes the `else` branch and calls `CSInstallSceneManifestRoleSpoof`, which
+  swizzles `-[LSBundleProxy objectForInfoDictionaryKey:ofClass:]` process-wide.
+  [ios18-runtime-carplay-admission.md](ios18-runtime-carplay-admission.md)
+  lists hooking anything in `carkitd` as a hard rule, because an earlier
+  LS-accessor hook there put the head unit into an endless connecting loop.
+  No loop observed now — this is one string-compare accessor, far lighter than
+  the entitlement spoof that caused it — but it should be gated on the process
+  not being `carkitd`. One line.
+
 - [ ] **Customize list omits CarSurf apps.** The CRS fetch wrapper is off (it
   crashed native CarPlay — see below), so Settings > Customize shows only the
   12 Apple icons; apps still show on the dashboard. Needs a list update that
@@ -23,8 +66,10 @@
   - Fix ideas: re-apply geometry on a later signal (`didUpdateCoordinateSpace`,
     first layout pass, or a one-shot next-runloop retry); stop caching the idiom
     for the process lifetime.
-  - Runtime-admitted Apple apps are sandboxed and can't write the shared log —
-    their `scene`/`traits` lines land in the app container's `tmp/carsurf.log`.
+  - Sandboxed apps can't write the shared log, so their `scene`/`traits` lines
+    are supposed to land in the app container's `tmp/carsurf.log`. As of
+    2026-08-18 **no such file exists for any app**, so this issue may not be
+    separately reproducible until the item above is resolved.
 - [ ] **`multiScene=0`** — `UIApplicationSceneManifest` is missing on iOS 18.5,
   so multi-scene hooks never install. Only single-scene bridging works.
 - [ ] **Dashboard refresh storm** — old `refresh → invalidation → relay updated`
