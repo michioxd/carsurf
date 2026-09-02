@@ -25,7 +25,7 @@
 
     NSArray *items = [specifier propertyForKey:@"carsurfItems"];
     if (![items isKindOfClass:NSArray.class] || items.count == 0) {
-        items = @[ @"Auto", @"Horizontal", @"Vertical" ];
+        items = @[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ];
     }
     _carsurfControl = [[UISegmentedControl alloc] initWithItems:items];
     _carsurfControl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -61,7 +61,8 @@
 - (void)carsurfRefreshValueFromSpecifier:(PSSpecifier *)specifier {
     if (!specifier || !_carsurfControl) return;
     NSInteger mode = [[specifier performGetter] integerValue];
-    if (mode < 0 || mode > 2) mode = 0;
+    NSInteger maxIndex = (NSInteger)_carsurfControl.numberOfSegments - 1;
+    if (mode < 0 || mode > maxIndex) mode = 0;
     _carsurfControl.selectedSegmentIndex = mode;
 }
 

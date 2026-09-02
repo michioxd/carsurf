@@ -94,6 +94,8 @@
                                               cell:PSSegmentCell
                                               edit:Nil];
         [layout setProperty:@"layoutMode" forKey:@"carsurfKey"];
+        [layout setProperty:@[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ]
+                forKey:@"carsurfItems"];
         [layout setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
         [layout setProperty:@(84.0) forKey:@"height"];
         [result addObject:layout];

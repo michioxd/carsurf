@@ -16,11 +16,17 @@ typedef NS_ENUM(NSInteger, CSBridgeMode) {
 typedef NS_ENUM(NSInteger, CSLayoutMode) {
     /// Follow the app's existing window shape where one exists.
     CSLayoutModeAuto = 0,
-    /// Fill the landscape area to the right of the CarPlay sidebar.
-    CSLayoutModeHorizontal = 1,
+    /// Fill the full landscape area to the right of the CarPlay sidebar.
+    CSLayoutModeHorizontalFull = 1,
     /// Use a centered 9:16 portrait viewport.
     CSLayoutModeVertical = 2,
+    /// Use a centered 16:9 horizontal viewport (letterboxed if the head unit
+    /// is taller than 16:9).
+    CSLayoutModeHorizontal169 = 3,
 };
+
+/// Convenience alias kept for source compatibility.
+#define CSLayoutModeHorizontal CSLayoutModeHorizontalFull
 
 /// Interface family reported to app code while it builds the bridged UI.
 typedef NS_ENUM(NSInteger, CSIdiomMode) {

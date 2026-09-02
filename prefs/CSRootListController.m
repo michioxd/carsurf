@@ -164,6 +164,8 @@
                                           edit:Nil];
     [specifier setProperty:@"layoutMode" forKey:@"carsurfKey"];
     [specifier setProperty:scope forKey:@"carsurfScope"];
+    [specifier setProperty:@[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ]
+                    forKey:@"carsurfItems"];
     [specifier setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
     [specifier setProperty:@(84.0) forKey:@"height"];
     return specifier;

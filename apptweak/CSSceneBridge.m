@@ -247,6 +247,25 @@ CGRect CSCarViewportForWindow(UIWindow *window, UIWindowScene *scene,
         usableFrame.size.width = portraitWidth;
     }
 
+    // Horizontal 16:9: center a 16:9 box inside the usable area. On a head
+    // unit that is already exactly 16:9 this is a no-op. On a wider display
+    // it letterboxes vertically; on a taller one it pillarboxes horizontally.
+    if (options.layoutMode == CSLayoutModeHorizontal169) {
+        CGFloat targetAspect = 16.0 / 9.0;
+        CGFloat frameAspect  = usableFrame.size.width / usableFrame.size.height;
+        if (frameAspect > targetAspect) {
+            // Display is wider than 16:9 — reduce width.
+            CGFloat newWidth = usableFrame.size.height * targetAspect;
+            usableFrame.origin.x += (usableFrame.size.width - newWidth) * 0.5;
+            usableFrame.size.width = newWidth;
+        } else if (frameAspect < targetAspect) {
+            // Display is taller than 16:9 — reduce height.
+            CGFloat newHeight = usableFrame.size.width / targetAspect;
+            usableFrame.origin.y += (usableFrame.size.height - newHeight) * 0.5;
+            usableFrame.size.height = newHeight;
+        }
+    }
+
     if (outSafeArea) *outSafeArea = safeArea;
     if (outPortrait) *outPortrait = portrait;
     return usableFrame;

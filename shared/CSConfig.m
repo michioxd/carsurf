@@ -64,9 +64,9 @@ static NSString *const kChangeNotification = @"com.pavunato.carsurf/reload";
         if (dict[@"layoutMode"]) {
             NSInteger layoutMode = [dict[@"layoutMode"] integerValue];
             _layoutMode = (layoutMode >= CSLayoutModeAuto &&
-                           layoutMode <= CSLayoutModeVertical)
+                           layoutMode <= CSLayoutModeHorizontal169)
                               ? (CSLayoutMode)layoutMode
-                              : CSLayoutModeHorizontal;
+                              : CSLayoutModeHorizontalFull;
         } else {
             // Compatibility with the short-lived boolean Vertical option.
             _layoutMode = [dict[@"portraitLayout"] boolValue]
