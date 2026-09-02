@@ -50,7 +50,7 @@
                  forKey:@"footerText"];
     [specifiers addObject:header];
 
-    [specifiers addObject:[self switchNamed:@"Enable CarSurf"
+    [specifiers addObject:[self switchNamed:@"Enable CarSurfExtended"
                                         key:@"enabled"
                                       scope:@"global"]];
 
@@ -103,7 +103,7 @@
 
     // --- Diagnostics -------------------------------------------------------
     PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:@"Diagnostics"];
-    [diagnosticsGroup setProperty:@"Verbose logging records CarSurf's admission and "
+    [diagnosticsGroup setProperty:@"Verbose logging records CarSurfExtended's admission and "
                                   @"scene-bridge activity to /var/mobile/Library/Logs/"
                                   @"carsurf.log for troubleshooting."
                            forKey:@"footerText"];
@@ -123,6 +123,30 @@
     respring.buttonAction = @selector(respring);
     [respring setProperty:@YES forKey:@"isDestructive"];
     [specifiers addObject:respring];
+
+    // --- Credits -----------------------------------------------------------
+    PSSpecifier *creditsGroup = [PSSpecifier groupSpecifierWithName:@"Credits"];
+    [specifiers addObject:creditsGroup];
+
+    PSSpecifier *originalCredit = [PSSpecifier preferenceSpecifierNamed:@"Original CarSurf by pavunato"
+                                                                target:self
+                                                                   set:NULL
+                                                                   get:NULL
+                                                                detail:Nil
+                                                                  cell:PSButtonCell
+                                                                  edit:Nil];
+    originalCredit.buttonAction = @selector(openOriginalCarSurf);
+    [specifiers addObject:originalCredit];
+
+    PSSpecifier *extendedCredit = [PSSpecifier preferenceSpecifierNamed:@"CarSurfExtended by michioxd"
+                                                                target:self
+                                                                   set:NULL
+                                                                   get:NULL
+                                                                detail:Nil
+                                                                  cell:PSButtonCell
+                                                                  edit:Nil];
+    extendedCredit.buttonAction = @selector(openCarSurfExtended);
+    [specifiers addObject:extendedCredit];
 
     return specifiers;
 }
@@ -233,18 +257,28 @@
     Class actionClass = NSClassFromString(@"SBSRelaunchAction");
     Class serviceClass = NSClassFromString(@"FBSSystemService");
     if (!actionClass || !serviceClass) {
-        NSLog(@"[CarSurf] respring unavailable; relaunch SpringBoard manually");
+        NSLog(@"[CarSurfExtended] respring unavailable; relaunch SpringBoard manually");
         return;
     }
 
     // options 4 = restart the render server, i.e. an ordinary respring.
     id action = ((id (*)(Class, SEL, NSString *, NSUInteger, NSURL *))objc_msgSend)(
-        actionClass, @selector(actionWithReason:options:targetURL:), @"CarSurf", 4, nil);
+        actionClass, @selector(actionWithReason:options:targetURL:), @"CarSurfExtended", 4, nil);
     if (!action) return;
 
     id service = ((id (*)(Class, SEL))objc_msgSend)(serviceClass, @selector(sharedService));
     ((void (*)(id, SEL, NSSet *, id))objc_msgSend)(
         service, @selector(sendActions:withResult:), [NSSet setWithObject:action], nil);
+}
+
+- (void)openOriginalCarSurf {
+    NSURL *url = [NSURL URLWithString:@"https://github.com/pavunato/carsurf"];
+    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
+}
+
+- (void)openCarSurfExtended {
+    NSURL *url = [NSURL URLWithString:@"https://github.com/michioxd/carsurf"];
+    [[UIApplication sharedApplication] openURL:url options:@{} completionHandler:nil];
 }
 
 @end
