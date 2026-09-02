@@ -37,7 +37,7 @@ typedef NS_ENUM(NSInteger, CSIdiomMode) {
 @interface CSAppOptions : NSObject
 @property (nonatomic, readonly, copy) NSString *bundleIdentifier;
 @property (nonatomic, readonly) CSBridgeMode mode;
-/// Render scale applied to the car scene, 0.5–2.0. 1.0 = native.
+/// Render scale applied to the car scene, 0.1–2.0. 1.0 = native.
 @property (nonatomic, readonly) CGFloat scale;
 /// Auto, iPhone, or iPad interface family reported to the app.
 @property (nonatomic, readonly) CSIdiomMode idiomMode;

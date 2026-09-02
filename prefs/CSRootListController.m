@@ -90,7 +90,7 @@
                                                          edit:Nil];
     [scale setProperty:@"scale" forKey:@"carsurfKey"];
     [scale setProperty:@"defaults" forKey:@"carsurfScope"];
-    [scale setProperty:@(0.5) forKey:@"min"];
+    [scale setProperty:@(0.1) forKey:@"min"];
     [scale setProperty:@(2.0) forKey:@"max"];
     [scale setProperty:@(1.0) forKey:@"default"];
     [scale setProperty:CSScaleSliderCell.class forKey:@"cellClass"];
