@@ -1,0 +1,59 @@
+name: Release carsurf
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (for example, v0.1.0)'
+        required: true
+        type: string
+      hide_system_apps:
+        description: 'Hide system apps (CARSURF_HIDE_SYSTEM_APPS)'
+        required: false
+        default: '0'
+        type: choice
+        options:
+          - '0'
+          - '1'
+
+permissions:
+  contents: write
+
+env:
+  HIDE_SYSTEM_APPS: ${{ inputs.hide_system_apps || '0' }}
+
+jobs:
+  release:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref }}
+
+      - name: Setup Theos
+        uses: waruhachi/theos-action@v2.4.6
+        with:
+          theos-src: 'theos/theos'
+          theos-branch: 'master'
+          sdks-src: 'theos/sdks'
+          sdks-branch: 'master'
+          libgcuniversal: 'false'
+          altlist: 'false'
+
+      - name: Build package
+        run: |
+          make clean package FINALPACKAGE=1 CARSURF_HIDE_SYSTEM_APPS="$HIDE_SYSTEM_APPS"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          name: CarSurfExtended ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: packages/*.deb
+          fail_on_unmatched_files: true

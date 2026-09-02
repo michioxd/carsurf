@@ -1,6 +1,6 @@
 Package: com.michioxd.carsurf-extended
 Name: CarSurfExtended
-Version: 0.2.1
+Version: 0.2.2
 Architecture: iphoneos-arm64
 Description: A fork of pavunato's CarSurf with added support for ultrawide screen head units. Run any app on your CarPlay display. A CarBridge-equivalent tweak rebuilt for the modern (iOS 15-18) CarPlay pipeline. Original repository: https://github.com/pavunato/carsurf
 Depends: firmware (>= 15.0), mobilesubstrate, preferenceloader
@@ -9,4 +9,3 @@ Maintainer: michioxd
 Author: michioxd
 Section: Tweaks
 Tag: compatible::ios18
-Depiction: https://repopo.pages.dev/changelogs/carsurf-0.2.1.html
