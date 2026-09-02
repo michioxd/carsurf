@@ -166,6 +166,10 @@ static void CSAppInit(void) {
                     CSLog("config disabled while CarPlay scene is active; exiting app");
                     exit(0);
                 }
+                // Live-apply any layout/scale changes to the current mirror
+                // window so the user does not have to close and reopen the app.
+                CSReloadMirroringOptions();
+                CSReloadSceneOptions();
             });
         });
 

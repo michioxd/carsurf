@@ -59,6 +59,11 @@ void CSNeutralizeResidualSafeArea(UIWindow *window);
 /// Applies the per-app render scale to a freshly connected car scene.
 void CSApplyScaleToCarScene(UIWindowScene *scene, CSAppOptions *options);
 
+/// Re-reads the per-app options from the shared config and immediately re-applies
+/// the viewport geometry to all active bridged car scenes (scene mode only;
+/// mirror mode is handled by CSReloadMirroringOptions).
+void CSReloadSceneOptions(void);
+
 #pragma mark - Mirror mode (legacy single-window apps)
 
 /// YES if this app cannot be given a second scene: no UIApplicationSceneManifest
@@ -70,6 +75,12 @@ BOOL CSAppIsSingleWindowOnly(void);
 /// impossible.
 void CSStartMirroringIntoScene(UIWindowScene *scene, CSAppOptions *options);
 void CSStopMirroring(void);
+
+/// Re-reads the per-app options from the shared config and immediately re-applies
+/// the viewport geometry to the current car window. Call this after the user
+/// changes display settings in Preferences so the new layout takes effect without
+/// requiring a full app restart.
+void CSReloadMirroringOptions(void);
 
 /// Temporarily expands an Auto-layout mirror to the full horizontal CarPlay
 /// viewport while an app-owned video player is active. Explicit Horizontal and

@@ -309,3 +309,20 @@ void CSStopMirroring(void) {
     gSourceSize = CGSizeZero;
     gAutoHorizontalApplied = NO;
 }
+
+void CSReloadMirroringOptions(void) {
+    if (!gCarWindow || !gCarScene) return;
+
+    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier ?: @"";
+    CSAppOptions *options = [CSConfig.sharedConfig optionsForBundle:bundleID];
+    gCarOptions = options;
+    gAutoHorizontalApplied = gVideoActive && options.layoutMode == CSLayoutModeAuto;
+
+    BOOL portrait = NO;
+    CSConfigureTransplantWindow(gCarWindow, gCarScene, options,
+                                  gSourceSize, gAutoHorizontalApplied, &portrait);
+    [gCarWindow.rootViewController.view setNeedsLayout];
+    [gCarWindow.rootViewController.view layoutIfNeeded];
+    CSLog("live-reloaded options (scale=%.2f, layout=%ld, portrait=%d)",
+            options.scale, (long)options.layoutMode, portrait);
+}

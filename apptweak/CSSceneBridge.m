@@ -376,6 +376,20 @@ static void CSCarSceneDisconnected(UIScene *scene) {
     CSStopMirroring();
 }
 
+void CSReloadSceneOptions(void) {
+    if (gActiveCarScenes == 0) return;
+    NSString *bundleID = NSBundle.mainBundle.bundleIdentifier ?: @"";
+    CSAppOptions *options = [CSConfig.sharedConfig optionsForBundle:bundleID];
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class]) continue;
+        if (!CSIsBridgedCarScene(scene)) continue;
+        UIWindowScene *windowScene = (UIWindowScene *)scene;
+        CSApplyScaleToCarScene(windowScene, options);
+        CSLog("live-reloaded scene options (scale=%.2f, layout=%ld)",
+                options.scale, (long)options.layoutMode);
+    }
+}
+
 static void CSObserveSceneLifecycle(void) {
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
 
