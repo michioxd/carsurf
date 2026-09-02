@@ -1,0 +1,42 @@
+name: Build carsurf
+
+on:
+  workflow_dispatch:
+    inputs:
+      hide_system_apps:
+        description: 'Hide system apps (CARSURF_HIDE_SYSTEM_APPS)'
+        required: false
+        default: '0'
+        type: choice
+        options:
+          - '0'
+          - '1'
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        uses: waruhachi/theos-action@v2.4.6
+        with:
+          theos-src: 'theos/theos'
+          theos-branch: 'master'
+          sdks-src: 'theos/sdks'
+          sdks-branch: 'master'
+          libgcuniversal: 'false'
+          altlist: 'false'
+
+      - name: Build package
+        run: |
+          make clean package FINALPACKAGE=1 CARSURF_HIDE_SYSTEM_APPS=${{ github.event.inputs.hide_system_apps }}
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: carsurf-deb
+          path: packages/*.deb
+          if-no-files-found: error
