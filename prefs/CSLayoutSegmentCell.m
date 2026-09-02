@@ -20,12 +20,15 @@
     _carsurfLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _carsurfLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     _carsurfLabel.adjustsFontForContentSizeCategory = YES;
-    _carsurfLabel.text = specifier.name ?: @"Layout";
+    _carsurfLabel.text = specifier.name ?: CSLocalizedString(@"root.display.layout");
     [self.contentView addSubview:_carsurfLabel];
 
     NSArray *items = [specifier propertyForKey:@"carsurfItems"];
     if (![items isKindOfClass:NSArray.class] || items.count == 0) {
-        items = @[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ];
+        items = @[ CSLocalizedString(@"segment.orientation.auto"),
+               CSLocalizedString(@"segment.orientation.hfull"),
+               CSLocalizedString(@"segment.orientation.vertical"),
+               CSLocalizedString(@"segment.orientation.h169") ];
     }
     _carsurfControl = [[UISegmentedControl alloc] initWithItems:items];
     _carsurfControl.translatesAutoresizingMaskIntoConstraints = NO;
@@ -54,7 +57,7 @@
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];
     self.titleLabel.hidden = YES;
-    _carsurfLabel.text = specifier.name ?: @"Layout";
+    _carsurfLabel.text = specifier.name ?: CSLocalizedString(@"root.display.layout");
     [self carsurfRefreshValueFromSpecifier:specifier];
 }
 

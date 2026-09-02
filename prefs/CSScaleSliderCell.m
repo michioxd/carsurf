@@ -41,7 +41,7 @@ static UIFont *CSMonospacedDigits(UIFont *font) {
     _carsurfLabel.translatesAutoresizingMaskIntoConstraints = NO;
     _carsurfLabel.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
     _carsurfLabel.adjustsFontForContentSizeCategory = YES;
-    _carsurfLabel.text = specifier.name ?: @"Scale";
+    _carsurfLabel.text = specifier.name ?: CSLocalizedString(@"root.display.scale");
     [self.contentView addSubview:_carsurfLabel];
 
     // Monospaced digits: the value changes continuously while dragging, and
@@ -63,7 +63,7 @@ static UIFont *CSMonospacedDigits(UIFont *font) {
     _carsurfSlider.minimumValue = [[specifier propertyForKey:@"min"] floatValue] ?: 0.5;
     _carsurfSlider.maximumValue = [[specifier propertyForKey:@"max"] floatValue] ?: 2.0;
     _carsurfSlider.continuous = YES;
-    _carsurfSlider.accessibilityLabel = specifier.name ?: @"Scale";
+    _carsurfSlider.accessibilityLabel = specifier.name ?: CSLocalizedString(@"root.display.scale");
     [_carsurfSlider addTarget:self
                        action:@selector(carsurfSliderChanged:)
              forControlEvents:UIControlEventValueChanged];
@@ -91,7 +91,7 @@ static UIFont *CSMonospacedDigits(UIFont *font) {
 - (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
     [super refreshCellContentsWithSpecifier:specifier];
     self.titleLabel.hidden = YES;
-    _carsurfLabel.text = specifier.name ?: @"Scale";
+    _carsurfLabel.text = specifier.name ?: CSLocalizedString(@"root.display.scale");
     [self carsurfMatchValueFont];
     [self carsurfRefreshValueFromSpecifier:specifier];
 }

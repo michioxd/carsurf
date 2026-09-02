@@ -1,0 +1,57 @@
+"root.header.footer" = "Puts any app you choose on the CarPlay display. Changes take effect after a respring.";
+
+"root.switch.enabled" = "Enable CarSurfExtended";
+
+"root.section.apps" = "Apps";
+"root.section.apps.footer" = "Only the apps you turn on here appear on the car screen. Everything else on the dashboard stays as CarPlay left it.";
+"root.apps.picker" = "Apps";
+
+"root.section.display" = "Display";
+"root.section.display.footer" = "Defaults for every enabled app; each app can override them. Scale below 1.0 fits more of the app on screen, above 1.0 makes controls easier to hit while driving. (H = Horizontal)";
+"root.display.scale" = "Scale";
+"root.display.orientation" = "Orientation";
+"root.display.layout" = "Layout";
+
+"root.section.diagnostics" = "Diagnostics";
+"root.section.diagnostics.footer" = "Verbose logging records CarSurfExtended's admission and scene-bridge activity to /var/mobile/Library/Logs/carsurf.log for troubleshooting.";
+"root.diagnostics.verbose" = "Verbose Logging";
+"root.diagnostics.respring" = "Respring";
+
+"root.section.credits" = "Credits";
+"root.credits.original" = "Original CarSurf by pavunato";
+"root.credits.extended" = "CarSurfExtended by michioxd";
+
+"applist.title" = "Apps";
+"applist.section.installed" = "Installed Apps";
+"applist.section.installed.footer" = "Tap an app, then turn on Enable for CarPlay. Apps that already support CarPlay natively don't need this — they keep working either way.";
+"applist.section.system" = "System Apps";
+"applist.section.system.footer" = "Bridging built-in apps is more likely to misbehave; try one at a time.";
+"applist.state.on" = "On";
+"applist.state.off" = "Off";
+
+"appoptions.title" = "App Display";
+"appoptions.section.enable.footer" = "Puts this app on the CarPlay dashboard. Nothing on disk is modified — the app keeps its original signature.";
+"appoptions.enable" = "Enable for CarPlay";
+"appoptions.section.display" = "CarPlay Display";
+"appoptions.section.display.footer" = "Orientation picks the shape of the viewport on the head unit; Layout is the interface the app builds for it. Scale below 1.0 fits more of the app on screen, above 1.0 makes controls easier to hit. (H = Horizontal)";
+"appoptions.display.orientation" = "Orientation";
+"appoptions.display.layout" = "Layout";
+"appoptions.display.scale" = "Scale";
+"appoptions.section.apply" = "Apply Changes";
+"appoptions.section.apply.footer" = "Close the app after changing layout or scale. The next phone or CarPlay launch uses the new values.";
+"appoptions.apply.close" = "Close App to Apply Changes";
+"appoptions.section.reset" = "Reset";
+"appoptions.section.reset.footer" = "Remove all per-app display overrides (orientation, layout, scale). The app will use the global defaults from the main CarSurfExtended settings page.";
+"appoptions.reset.action" = "Reset to Global Settings";
+
+"segment.orientation.auto" = "Auto";
+"segment.orientation.hfull" = "H (full)";
+"segment.orientation.vertical" = "Vertical";
+"segment.orientation.h169" = "H (16:9)";
+"segment.layout.auto" = "Auto";
+"segment.layout.iphone" = "iPhone";
+"segment.layout.ipad" = "iPad";
+
+"summary.none" = "None";
+"summary.one" = "1 app";
+"summary.many" = "%lu apps";

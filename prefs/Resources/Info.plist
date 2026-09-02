@@ -2,6 +2,10 @@
     CFBundleDevelopmentRegion = en;
     CFBundleExecutable = CSPrefs;
     CFBundleIdentifier = "com.pavunato.carsurf.prefs";
+    CFBundleLocalizations = (
+        en,
+        vi
+    );
     CFBundleInfoDictionaryVersion = "6.0";
     CFBundleName = CSPrefs;
     CFBundlePackageType = BNDL;

@@ -51,7 +51,7 @@ static UIImage *CSSmallAppIcon(NSString *bundleIdentifier) {
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = @"Apps";
+    self.title = CSLocalizedString(@"applist.title");
 }
 
 - (void)viewWillAppear:(BOOL)animated {
@@ -88,10 +88,8 @@ static UIImage *CSSmallAppIcon(NSString *bundleIdentifier) {
 - (NSArray<PSSpecifier *> *)buildSpecifiers {
     NSMutableArray<PSSpecifier *> *specifiers = [NSMutableArray new];
 
-    PSSpecifier *userGroup = [PSSpecifier groupSpecifierWithName:@"Installed Apps"];
-    [userGroup setProperty:@"Tap an app, then turn on Enable for CarPlay. Apps that "
-                           @"already support CarPlay natively don't need this — they "
-                           @"keep working either way."
+    PSSpecifier *userGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"applist.section.installed")];
+    [userGroup setProperty:CSLocalizedString(@"applist.section.installed.footer")
                     forKey:@"footerText"];
     [specifiers addObject:userGroup];
     [specifiers addObjectsFromArray:[self specifiersForApplicationsOfType:@"User"]];
@@ -104,9 +102,8 @@ static UIImage *CSSmallAppIcon(NSString *bundleIdentifier) {
     // jailbreak's own system-app tooling. Confirmed the hard way on Photos.
     // The daemon's CSHasDedicatedSandboxProfile guard already refuses to
     // touch one; this keeps a user from trying in the first place.
-    PSSpecifier *systemGroup = [PSSpecifier groupSpecifierWithName:@"System Apps"];
-    [systemGroup setProperty:@"Bridging built-in apps is more likely to misbehave; "
-                             @"try one at a time."
+    PSSpecifier *systemGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"applist.section.system")];
+    [systemGroup setProperty:CSLocalizedString(@"applist.section.system.footer")
                       forKey:@"footerText"];
     [specifiers addObject:systemGroup];
     [specifiers addObjectsFromArray:[self specifiersForApplicationsOfType:@"System"]];
@@ -162,7 +159,9 @@ static UIImage *CSSmallAppIcon(NSString *bundleIdentifier) {
 
 - (id)readAppStateLabel:(PSSpecifier *)specifier {
     NSString *bundleID = [specifier propertyForKey:@"carsurfBundle"];
-    return [CSPrefsStore.sharedStore isAppEnabled:bundleID] ? @"On" : @"Off";
+    return [CSPrefsStore.sharedStore isAppEnabled:bundleID]
+        ? CSLocalizedString(@"applist.state.on")
+        : CSLocalizedString(@"applist.state.off");
 }
 
 @end

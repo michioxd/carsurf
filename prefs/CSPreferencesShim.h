@@ -3,6 +3,10 @@
 
 #import <UIKit/UIKit.h>
 
+#define CSPrefsBundle [NSBundle bundleForClass:self.class]
+#define CSLocalizedString(key) \
+    [CSPrefsBundle localizedStringForKey:(key) value:(key) table:@"Localizable"]
+
 typedef enum {
     PSGroupCell,
     PSLinkCell,

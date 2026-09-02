@@ -1,0 +1,57 @@
+"root.header.footer" = "Hiển thị bất kỳ ứng dụng nào bạn chọn lên màn hình CarPlay. Thay đổi có hiệu lực sau khi respring.";
+
+"root.switch.enabled" = "Bật CarSurfExtended";
+
+"root.section.apps" = "Ứng dụng";
+"root.section.apps.footer" = "Chỉ những ứng dụng bạn bật ở đây mới xuất hiện trên màn hình xe. Mọi thứ khác trên bảng điều khiển vẫn như CarPlay để lại.";
+"root.apps.picker" = "Ứng dụng";
+
+"root.section.display" = "Hiển thị";
+"root.section.display.footer" = "Mặc định cho mọi ứng dụng đã bật; mỗi ứng dụng có thể ghi đè. Tỷ lệ dưới 1.0 hiển thị nhiều hơn, trên 1.0 làm các nút dễ nhấn hơn khi lái xe. (H = Chiều ngang)";
+"root.display.scale" = "Tỷ lệ";
+"root.display.orientation" = "Hướng màn hình";
+"root.display.layout" = "Bố cục";
+
+"root.section.diagnostics" = "Chẩn đoán";
+"root.section.diagnostics.footer" = "Ghi nhật ký chi tiết ghi lại hoạt động admission và scene-bridge của CarSurfExtended vào /var/mobile/Library/Logs/carsurf.log để xử lý sự cố.";
+"root.diagnostics.verbose" = "Ghi nhật ký chi tiết";
+"root.diagnostics.respring" = "Respring";
+
+"root.section.credits" = "Ghi công";
+"root.credits.original" = "CarSurf gốc bởi pavunato";
+"root.credits.extended" = "CarSurfExtended bởi michioxd";
+
+"applist.title" = "Ứng dụng";
+"applist.section.installed" = "Ứng dụng đã cài";
+"applist.section.installed.footer" = "Nhấn vào ứng dụng, sau đó bật Bật cho CarPlay. Các ứng dụng đã hỗ trợ CarPlay sẵn không cần thiết — chúng vẫn hoạt động bình thường.";
+"applist.section.system" = "Ứng dụng hệ thống";
+"applist.section.system.footer" = "Cầu nối các ứng dụng tích hợp dễ gặp sự cố hơn; hãy thử từng ứng dụng một.";
+"applist.state.on" = "Bật";
+"applist.state.off" = "Tắt";
+
+"appoptions.title" = "Hiển thị ứng dụng";
+"appoptions.section.enable.footer" = "Đưa ứng dụng này lên bảng điều khiển CarPlay. Không có gì trên ổ đĩa bị sửa đổi — ứng dụng giữ nguyên chữ ký gốc.";
+"appoptions.enable" = "Bật cho CarPlay";
+"appoptions.section.display" = "Hiển thị CarPlay";
+"appoptions.section.display.footer" = "Hướng màn hình chọn hình dạng cửa sổ trên head unit; Bố cục là giao diện ứng dụng xây dựng cho nó. Tỷ lệ dưới 1.0 hiển thị nhiều hơn, trên 1.0 làm các nút dễ nhấn hơn. (H = Chiều ngang)";
+"appoptions.display.orientation" = "Hướng màn hình";
+"appoptions.display.layout" = "Bố cục";
+"appoptions.display.scale" = "Tỷ lệ";
+"appoptions.section.apply" = "Áp dụng thay đổi";
+"appoptions.section.apply.footer" = "Đóng ứng dụng sau khi thay đổi bố cục hoặc tỷ lệ. Lần khởi động tiếp theo trên điện thoại hoặc CarPlay sẽ dùng giá trị mới.";
+"appoptions.apply.close" = "Đóng ứng dụng để áp dụng";
+"appoptions.section.reset" = "Đặt lại";
+"appoptions.section.reset.footer" = "Xóa tất cả ghi đè hiển thị theo ứng dụng (hướng, bố cục, tỷ lệ). Ứng dụng sẽ dùng cài đặt mặc định chung từ trang cài đặt CarSurfExtended chính.";
+"appoptions.reset.action" = "Đặt lại về cài đặt chung";
+
+"segment.orientation.auto" = "Tự động";
+"segment.orientation.hfull" = "H (toàn)";
+"segment.orientation.vertical" = "Dọc";
+"segment.orientation.h169" = "H (16:9)";
+"segment.layout.auto" = "Tự động";
+"segment.layout.iphone" = "iPhone";
+"segment.layout.ipad" = "iPad";
+
+"summary.none" = "Không có";
+"summary.one" = "1 ứng dụng";
+"summary.many" = "%lu ứng dụng";

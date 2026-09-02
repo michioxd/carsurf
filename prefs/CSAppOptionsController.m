@@ -20,7 +20,7 @@
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.title = self.specifier.name ?: @"App Display";
+    self.title = self.specifier.name ?: CSLocalizedString(@"appoptions.title");
 }
 
 - (BOOL)carsurfIsEnabled {
@@ -55,14 +55,12 @@
         // On-disk patching is retired: CarPlay admission is done entirely at
         // runtime on every supported release, so the app's bytes are never
         // modified and there is no per-app patch status to show.
-        [enableGroup setProperty:@"Puts this app on the CarPlay dashboard. "
-                                 @"Nothing on disk is modified — the app keeps "
-                                 @"its original signature."
+        [enableGroup setProperty:CSLocalizedString(@"appoptions.section.enable.footer")
                           forKey:@"footerText"];
         [result addObject:enableGroup];
 
         PSSpecifier *enable =
-            [PSSpecifier preferenceSpecifierNamed:@"Enable for CarPlay"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.enable")
                                             target:self
                                                set:@selector(setEnabled:specifier:)
                                                get:@selector(readEnabled:)
@@ -77,16 +75,13 @@
         // re-sign to trigger or report on. carsurf-helperd no longer services a
         // patch request at all.
 
-        PSSpecifier *group = [PSSpecifier groupSpecifierWithName:@"CarPlay Display"];
-        [group setProperty:@"Orientation picks the shape of the viewport on the "
-                           @"head unit; Layout is the interface the app builds "
-                           @"for it. Scale below 1.0 fits more of the app on "
-                           @"screen, above 1.0 makes controls easier to hit."
+        PSSpecifier *group = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"appoptions.section.display")];
+        [group setProperty:CSLocalizedString(@"appoptions.section.display.footer")
                    forKey:@"footerText"];
         [result addObject:group];
 
         PSSpecifier *layout =
-            [PSSpecifier preferenceSpecifierNamed:@"Orientation"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.display.orientation")
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -94,14 +89,17 @@
                                               cell:PSSegmentCell
                                               edit:Nil];
         [layout setProperty:@"layoutMode" forKey:@"carsurfKey"];
-        [layout setProperty:@[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ]
+        [layout setProperty:@[ CSLocalizedString(@"segment.orientation.auto"),
+                       CSLocalizedString(@"segment.orientation.hfull"),
+                       CSLocalizedString(@"segment.orientation.vertical"),
+                       CSLocalizedString(@"segment.orientation.h169") ]
                 forKey:@"carsurfItems"];
         [layout setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
         [layout setProperty:@(84.0) forKey:@"height"];
         [result addObject:layout];
 
         PSSpecifier *idiom =
-            [PSSpecifier preferenceSpecifierNamed:@"Layout"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.display.layout")
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -109,13 +107,16 @@
                                               cell:PSSegmentCell
                                               edit:Nil];
         [idiom setProperty:@"idiomMode" forKey:@"carsurfKey"];
-        [idiom setProperty:@[ @"Auto", @"iPhone", @"iPad" ] forKey:@"carsurfItems"];
+        [idiom setProperty:@[ CSLocalizedString(@"segment.layout.auto"),
+                      CSLocalizedString(@"segment.layout.iphone"),
+                      CSLocalizedString(@"segment.layout.ipad") ]
+               forKey:@"carsurfItems"];
         [idiom setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
         [idiom setProperty:@(84.0) forKey:@"height"];
         [result addObject:idiom];
 
         PSSpecifier *scale =
-            [PSSpecifier preferenceSpecifierNamed:@"Scale"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.display.scale")
                                             target:self
                                                set:@selector(setAppValue:specifier:)
                                                get:@selector(readAppValue:)
@@ -131,14 +132,13 @@
         [result addObject:scale];
 
         PSSpecifier *applyGroup =
-            [PSSpecifier groupSpecifierWithName:@"Apply Changes"];
-        [applyGroup setProperty:@"Close the app after changing layout or scale. "
-                                @"The next phone or CarPlay launch uses the new values."
+            [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"appoptions.section.apply")];
+        [applyGroup setProperty:CSLocalizedString(@"appoptions.section.apply.footer")
                         forKey:@"footerText"];
         [result addObject:applyGroup];
 
         PSSpecifier *close =
-            [PSSpecifier preferenceSpecifierNamed:@"Close App to Apply Changes"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.apply.close")
                                             target:self
                                                set:NULL
                                                get:NULL
@@ -150,15 +150,13 @@
         [result addObject:close];
 
         PSSpecifier *resetGroup =
-            [PSSpecifier groupSpecifierWithName:@"Reset"];
-        [resetGroup setProperty:@"Remove all per-app display overrides (orientation, "
-                                @"layout, scale). The app will use the global defaults "
-                                @"from the main CarSurfExtended settings page."
+            [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"appoptions.section.reset")];
+        [resetGroup setProperty:CSLocalizedString(@"appoptions.section.reset.footer")
                          forKey:@"footerText"];
         [result addObject:resetGroup];
 
         PSSpecifier *reset =
-            [PSSpecifier preferenceSpecifierNamed:@"Reset to Global Settings"
+            [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"appoptions.reset.action")
                                             target:self
                                                set:NULL
                                                get:NULL

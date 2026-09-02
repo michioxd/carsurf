@@ -45,25 +45,23 @@
 
     // --- Master switch -----------------------------------------------------
     PSSpecifier *header = [PSSpecifier groupSpecifierWithName:nil];
-    [header setProperty:@"Puts any app you choose on the CarPlay display. "
-                        @"Changes take effect after a respring."
+    [header setProperty:CSLocalizedString(@"root.header.footer")
                  forKey:@"footerText"];
     [specifiers addObject:header];
 
-    [specifiers addObject:[self switchNamed:@"Enable CarSurfExtended"
+    [specifiers addObject:[self switchNamed:CSLocalizedString(@"root.switch.enabled")
                                         key:@"enabled"
                                       scope:@"global"]];
 
     // --- App picker --------------------------------------------------------
     // One link, one list: tap an app, flip its switch. See CSAppListController
     // for why this used to be two separate screens.
-    PSSpecifier *appsGroup = [PSSpecifier groupSpecifierWithName:@"Apps"];
-    [appsGroup setProperty:@"Only the apps you turn on here appear on the car screen. "
-                           @"Everything else on the dashboard stays as CarPlay left it."
+    PSSpecifier *appsGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"root.section.apps")];
+    [appsGroup setProperty:CSLocalizedString(@"root.section.apps.footer")
                     forKey:@"footerText"];
     [specifiers addObject:appsGroup];
 
-    PSSpecifier *picker = [PSSpecifier preferenceSpecifierNamed:@"Apps"
+    PSSpecifier *picker = [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.apps.picker")
                                                         target:self
                                                            set:NULL
                                                            get:@selector(enabledAppSummary:)
@@ -73,15 +71,12 @@
     [specifiers addObject:picker];
 
     // --- Display defaults --------------------------------------------------
-    PSSpecifier *displayGroup = [PSSpecifier groupSpecifierWithName:@"Display"];
-    [displayGroup setProperty:@"Defaults for every enabled app; each app can "
-                              @"override them. Scale below 1.0 fits more of the "
-                              @"app on screen, above 1.0 makes controls easier to "
-                              @"hit while driving."
+    PSSpecifier *displayGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"root.section.display")];
+    [displayGroup setProperty:CSLocalizedString(@"root.section.display.footer")
                        forKey:@"footerText"];
     [specifiers addObject:displayGroup];
 
-    PSSpecifier *scale = [PSSpecifier preferenceSpecifierNamed:@"Scale"
+    PSSpecifier *scale = [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.display.scale")
                                                        target:self
                                                           set:@selector(setValue:specifier:)
                                                           get:@selector(readValue:)
@@ -102,18 +97,16 @@
     [specifiers addObject:scale];
 
     // --- Diagnostics -------------------------------------------------------
-    PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:@"Diagnostics"];
-    [diagnosticsGroup setProperty:@"Verbose logging records CarSurfExtended's admission and "
-                                  @"scene-bridge activity to /var/mobile/Library/Logs/"
-                                  @"carsurf.log for troubleshooting."
+        PSSpecifier *diagnosticsGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"root.section.diagnostics")];
+        [diagnosticsGroup setProperty:CSLocalizedString(@"root.section.diagnostics.footer")
                            forKey:@"footerText"];
     [specifiers addObject:diagnosticsGroup];
 
-    [specifiers addObject:[self switchNamed:@"Verbose Logging"
+        [specifiers addObject:[self switchNamed:CSLocalizedString(@"root.diagnostics.verbose")
                                         key:@"verboseLogging"
                                       scope:@"global"]];
 
-    PSSpecifier *respring = [PSSpecifier preferenceSpecifierNamed:@"Respring"
+        PSSpecifier *respring = [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.diagnostics.respring")
                                                           target:self
                                                              set:NULL
                                                              get:NULL
@@ -125,10 +118,10 @@
     [specifiers addObject:respring];
 
     // --- Credits -----------------------------------------------------------
-    PSSpecifier *creditsGroup = [PSSpecifier groupSpecifierWithName:@"Credits"];
+    PSSpecifier *creditsGroup = [PSSpecifier groupSpecifierWithName:CSLocalizedString(@"root.section.credits")];
     [specifiers addObject:creditsGroup];
 
-    PSSpecifier *originalCredit = [PSSpecifier preferenceSpecifierNamed:@"Original CarSurf by pavunato"
+    PSSpecifier *originalCredit = [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.credits.original")
                                                                 target:self
                                                                    set:NULL
                                                                    get:NULL
@@ -138,7 +131,7 @@
     originalCredit.buttonAction = @selector(openOriginalCarSurf);
     [specifiers addObject:originalCredit];
 
-    PSSpecifier *extendedCredit = [PSSpecifier preferenceSpecifierNamed:@"CarSurfExtended by michioxd"
+    PSSpecifier *extendedCredit = [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.credits.extended")
                                                                 target:self
                                                                    set:NULL
                                                                    get:NULL
@@ -179,7 +172,7 @@
 
 - (PSSpecifier *)layoutModeSpecifierForScope:(NSString *)scope {
     PSSpecifier *specifier =
-        [PSSpecifier preferenceSpecifierNamed:@"Orientation"
+        [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.display.orientation")
                                         target:self
                                            set:@selector(setValue:specifier:)
                                            get:@selector(readValue:)
@@ -188,7 +181,10 @@
                                           edit:Nil];
     [specifier setProperty:@"layoutMode" forKey:@"carsurfKey"];
     [specifier setProperty:scope forKey:@"carsurfScope"];
-    [specifier setProperty:@[ @"Auto", @"H (full)", @"Vertical", @"H (16:9)" ]
+    [specifier setProperty:@[ CSLocalizedString(@"segment.orientation.auto"),
+                              CSLocalizedString(@"segment.orientation.hfull"),
+                              CSLocalizedString(@"segment.orientation.vertical"),
+                              CSLocalizedString(@"segment.orientation.h169") ]
                     forKey:@"carsurfItems"];
     [specifier setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
     [specifier setProperty:@(84.0) forKey:@"height"];
@@ -197,7 +193,7 @@
 
 - (PSSpecifier *)idiomModeSpecifierForScope:(NSString *)scope {
     PSSpecifier *specifier =
-        [PSSpecifier preferenceSpecifierNamed:@"Layout"
+        [PSSpecifier preferenceSpecifierNamed:CSLocalizedString(@"root.display.layout")
                                         target:self
                                            set:@selector(setValue:specifier:)
                                            get:@selector(readValue:)
@@ -206,7 +202,10 @@
                                           edit:Nil];
     [specifier setProperty:@"idiomMode" forKey:@"carsurfKey"];
     [specifier setProperty:scope forKey:@"carsurfScope"];
-    [specifier setProperty:@[ @"Auto", @"iPhone", @"iPad" ] forKey:@"carsurfItems"];
+    [specifier setProperty:@[ CSLocalizedString(@"segment.layout.auto"),
+                              CSLocalizedString(@"segment.layout.iphone"),
+                              CSLocalizedString(@"segment.layout.ipad") ]
+                    forKey:@"carsurfItems"];
     [specifier setProperty:CSLayoutSegmentCell.class forKey:@"cellClass"];
     [specifier setProperty:@(84.0) forKey:@"height"];
     return specifier;
@@ -245,8 +244,8 @@
 
 - (id)enabledAppSummary:(PSSpecifier *)specifier {
     NSUInteger count = CSPrefsStore.sharedStore.enabledAppCount;
-    if (count == 0) return @"None";
-    return count == 1 ? @"1 app" : [NSString stringWithFormat:@"%lu apps", (unsigned long)count];
+    if (count == 0) return CSLocalizedString(@"summary.none");
+    return count == 1 ? CSLocalizedString(@"summary.one") : [NSString stringWithFormat:CSLocalizedString(@"summary.many"), (unsigned long)count];
 }
 
 #pragma mark - Respring
