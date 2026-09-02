@@ -23,6 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable id)value:(NSString *)key forApp:(NSString *)bundleIdentifier;
 - (void)setValue:(nullable id)value key:(NSString *)key forApp:(NSString *)bundleIdentifier;
 
+- (void)resetDisplayValuesForApp:(NSString *)bundleIdentifier;
+
 /// Bundle identifiers currently switched on.
 @property (nonatomic, readonly) NSUInteger enabledAppCount;
 

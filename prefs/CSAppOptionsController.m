@@ -148,6 +148,26 @@
         close.buttonAction = @selector(closeApp);
         [close setProperty:@YES forKey:@"isDestructive"];
         [result addObject:close];
+
+        PSSpecifier *resetGroup =
+            [PSSpecifier groupSpecifierWithName:@"Reset"];
+        [resetGroup setProperty:@"Remove all per-app display overrides (orientation, "
+                                @"layout, scale). The app will use the global defaults "
+                                @"from the main CarSurfExtended settings page."
+                         forKey:@"footerText"];
+        [result addObject:resetGroup];
+
+        PSSpecifier *reset =
+            [PSSpecifier preferenceSpecifierNamed:@"Reset to Global Settings"
+                                            target:self
+                                               set:NULL
+                                               get:NULL
+                                            detail:Nil
+                                              cell:PSButtonCell
+                                              edit:Nil];
+        reset.buttonAction = @selector(resetToGlobalSettings);
+        [reset setProperty:@YES forKey:@"isDestructive"];
+        [result addObject:reset];
         _carsurfSpecifiers = result;
     }
 
@@ -181,6 +201,17 @@
     NSString *notification =
         [@"com.pavunato.carsurf/close/" stringByAppendingString:bundleID];
     notify_post(notification.UTF8String);
+}
+
+- (void)resetToGlobalSettings {
+    NSString *bundleID = self.bundleIdentifier;
+    if (bundleID.length == 0) return;
+
+    [CSPrefsStore.sharedStore resetDisplayValuesForApp:bundleID];
+
+    _carsurfSpecifiers = nil;
+    _carsurfReentering = NO;
+    [self reloadSpecifiers];
 }
 
 @end

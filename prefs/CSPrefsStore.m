@@ -133,6 +133,13 @@ static NSString *const kDashboardDisabledKey = @"dashboardDisabled";
     [self flush];
 }
 
+- (void)resetDisplayValuesForApp:(NSString *)bundleIdentifier {
+    if (bundleIdentifier.length == 0) return;
+    for (NSString *key in @[ @"layoutMode", @"idiomMode", @"scale" ]) {
+        [self setValue:nil key:key forApp:bundleIdentifier];
+    }
+}
+
 - (void)setApp:(NSString *)bundleIdentifier enabled:(BOOL)enabled {
     [self setValue:enabled ? @YES : nil key:@"enabled" forApp:bundleIdentifier];
 
